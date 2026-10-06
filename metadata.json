@@ -1,0 +1,8 @@
+{
+  "name": "Remix Amalia Paramitha",
+  "description": "Asisten AI untuk ekstraksi data KTP/KK dan pembuatan surat rekomendasi perjalanan resmi bagi PT. Alzam Mandiri yang dapat diintegrasikan dengan sistem basis data internal perusahaan untuk verifikasi otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
