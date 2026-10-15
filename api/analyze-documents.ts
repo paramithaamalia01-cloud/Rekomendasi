@@ -40,6 +40,78 @@ function toTitleCase(str: string): string {
     .join('');
 }
 
+const INDO_MONTH_MAP: Record<string, string> = {
+  '1': 'Januari', '01': 'Januari', 'jan': 'Januari', 'januari': 'Januari', 'january': 'Januari',
+  '2': 'Februari', '02': 'Februari', 'feb': 'Februari', 'februari': 'Februari', 'february': 'Februari',
+  '3': 'Maret', '03': 'Maret', 'mar': 'Maret', 'maret': 'Maret', 'march': 'Maret',
+  '4': 'April', '04': 'April', 'apr': 'April', 'april': 'April',
+  '5': 'Mei', '05': 'Mei', 'may': 'Mei', 'mei': 'Mei',
+  '6': 'Juni', '06': 'Juni', 'jun': 'Juni', 'juni': 'Juni', 'june': 'Juni',
+  '7': 'Juli', '07': 'Juli', 'jul': 'Juli', 'juli': 'Juli', 'july': 'Juli',
+  '8': 'Agustus', '08': 'Agustus', 'agu': 'Agustus', 'agt': 'Agustus', 'agustus': 'Agustus', 'aug': 'Agustus', 'august': 'Agustus',
+  '9': 'September', '09': 'September', 'sep': 'September', 'sept': 'September', 'september': 'September',
+  '10': 'Oktober', 'okt': 'Oktober', 'oktober': 'Oktober', 'oct': 'Oktober', 'october': 'Oktober',
+  '11': 'November', 'nov': 'November', 'november': 'November',
+  '12': 'Desember', 'des': 'Desember', 'desember': 'Desember', 'dec': 'Desember', 'december': 'Desember',
+};
+
+function formatIndonesianBirthDate(raw?: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+
+  const dbyMatch = trimmed.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (dbyMatch) {
+    const day = parseInt(dbyMatch[1], 10);
+    const mLower = dbyMatch[2].toLowerCase();
+    const month = INDO_MONTH_MAP[mLower] || (dbyMatch[2].charAt(0).toUpperCase() + dbyMatch[2].slice(1).toLowerCase());
+    return `${day} ${month} ${dbyMatch[3]}`;
+  }
+
+  const dmyMatch = trimmed.match(/^(\d{1,2})[-\/.](\d{1,2}|[A-Za-z]{3,9})[-\/.](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const mRaw = dmyMatch[2].toLowerCase();
+    const month = INDO_MONTH_MAP[mRaw] || mRaw;
+    let year = parseInt(dmyMatch[3], 10);
+    if (year < 100) {
+      const curYy = new Date().getFullYear() % 100;
+      year = year <= curYy ? 2000 + year : 1900 + year;
+    }
+    return `${day} ${month} ${year}`;
+  }
+
+  return trimmed;
+}
+
+function extractBirthInfoFromNik(nik?: string): { tanggalLahir: string; jenisKelamin: 'LAKI-LAKI' | 'PEREMPUAN' } | null {
+  if (!nik || typeof nik !== 'string') return null;
+  const clean = nik.replace(/\D/g, '');
+  if (clean.length !== 16) return null;
+
+  const dayRaw = parseInt(clean.substring(6, 8), 10);
+  const month = parseInt(clean.substring(8, 10), 10);
+  const yy = parseInt(clean.substring(10, 12), 10);
+
+  if (month < 1 || month > 12) return null;
+
+  let jk: 'LAKI-LAKI' | 'PEREMPUAN' = 'LAKI-LAKI';
+  let day = dayRaw;
+  if (dayRaw > 40) {
+    jk = 'PEREMPUAN';
+    day = dayRaw - 40;
+  }
+  if (day < 1 || day > 31) return null;
+
+  const curYy = new Date().getFullYear() % 100;
+  const year = yy <= curYy ? 2000 + yy : 1900 + yy;
+
+  const months = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  return {
+    tanggalLahir: `${day} ${months[month]} ${year}`,
+    jenisKelamin: jk,
+  };
+}
+
 let globalSequence = 7431;
 function generateLetterNumber(): string {
   const now = new Date();
@@ -60,7 +132,7 @@ function formatIndonesianDate(date = new Date()): string {
 }
 
 export default async function handler(req: any, res: any) {
-  // Support CORS headers for Vercel preview environments
+  // Support CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -109,26 +181,9 @@ export default async function handler(req: any, res: any) {
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
-    // Default baseline fallback profile
-    const defaultProfile = {
+    // Company and official letter metadata
+    const officialBase = {
       templateType: selectedTemplate,
-      nik: '3604075304950002',
-      namaLengkap: 'Euis Cholishoh',
-      tempatLahir: 'Serang',
-      tanggalLahir: '13 April 1995',
-      tempatTanggalLahir: 'Serang, 13 April 1995',
-      jenisKelamin: 'PEREMPUAN',
-      alamatKtp: 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten',
-      nomorKk: '3604070000000000',
-      namaKepalaKeluarga: 'Euis Cholishoh',
-      namaAyah: namaAyah || 'H. Ahmad Subandi',
-      nomorPasporLama: 'Y0195142',
-      dateOfExpiry: '11/3/2027',
-      expiredDatePaspor: '11/3/2027',
-      agama: 'Islam',
-      pekerjaan: 'Wiraswasta',
-      statusPerkawinan: 'Belum Kawin',
-      kewarganegaraan: 'WNI',
       negaraTujuan: 'Arab Saudi',
       estimasiKeberangkatan: departureMonth || '16 - 24 November 2026',
       jadwalKeberangkatanDanKepulangan: departureMonth || '16 - 24 November 2026',
@@ -150,127 +205,167 @@ export default async function handler(req: any, res: any) {
       websitePerusahaan: 'www.umrahbisa.com',
       tujuanKantorImigrasi: finalTujuanImigrasi,
       alamatKantorImigrasi: finalAlamatImigrasi,
-      crossCheckStatus: {
-        nikValid: true,
-        kkValid: true,
-        nameMatched: true,
-        notes: 'Analisis dokumen PT. Alzam Mandiri Wisata berhasil diproses.'
-      }
     };
 
-    if (!apiKey) {
-      // Return client OCR merged data or fallback data if no key configured
-      if (clientOcrData && (clientOcrData.nik || clientOcrData.namaLengkap)) {
-        return res.status(200).json({
-          success: true,
-          data: {
-            ...defaultProfile,
-            ...clientOcrData,
-            namaLengkap: toTitleCase(clientOcrData.namaLengkap || defaultProfile.namaLengkap),
-            tujuanKantorImigrasi: finalTujuanImigrasi,
-            alamatKantorImigrasi: finalAlamatImigrasi,
-          }
-        });
-      }
-      return res.status(200).json({ success: true, data: defaultProfile });
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-    const parts: any[] = [];
-
-    if (ktpImage) {
-      const parsed = parseBase64(ktpImage);
-      parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.data } });
-      parts.push({ text: 'GAMBAR KTP REPUBLIK INDONESIA' });
-    }
-    if (kkImage) {
-      const parsed = parseBase64(kkImage);
-      parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.data } });
-      parts.push({ text: 'GAMBAR KARTU KELUARGA REPUBLIK INDONESIA' });
-    }
-    if (passportImage) {
-      const parsed = parseBase64(passportImage);
-      parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.data } });
-      parts.push({ text: 'GAMBAR PASPOR REPUBLIK INDONESIA' });
-    }
-
-    parts.push({
-      text: `Ekstrak data dokumen identitas KTP, KK, dan Paspor Pemohon secara akurat.
-nik: 16 digit NIK.
-namaLengkap: Nama lengkap pemohon tanpa kata 'Nama'.
-tempatLahir: Nama kota/kabupaten.
-tanggalLahir: Format 'DD Bulan YYYY'.
-tempatTanggalLahir: 'Kota, DD Bulan YYYY'.
-jenisKelamin: LAKI-LAKI / PEREMPUAN.
-alamatKtp: Alamat lengkap KTP.
-nomorKk: 16 digit No KK.
-namaKepalaKeluarga: Nama kepala keluarga.
-namaAyah: Nama ayah kandung dari KK.
-nomorPasporLama: Nomor paspor lama jika ada (contoh: Y0195142).
-dateOfExpiry: Tanggal habis berlaku paspor.
-agama: Agama (Islam, Kristen, dll).
-statusPerkawinan: Status perkawinan.
-pekerjaan: Pekerjaan.`
-    });
-
-    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
     let extracted: any = {};
 
-    for (const modelCandidate of modelsToTry) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelCandidate,
-          contents: { parts },
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                nik: { type: Type.STRING },
-                namaLengkap: { type: Type.STRING },
-                tempatLahir: { type: Type.STRING },
-                tanggalLahir: { type: Type.STRING },
-                tempatTanggalLahir: { type: Type.STRING },
-                jenisKelamin: { type: Type.STRING },
-                alamatKtp: { type: Type.STRING },
-                nomorKk: { type: Type.STRING },
-                namaKepalaKeluarga: { type: Type.STRING },
-                namaAyah: { type: Type.STRING },
-                nomorPasporLama: { type: Type.STRING },
-                dateOfExpiry: { type: Type.STRING },
-                agama: { type: Type.STRING },
-                statusPerkawinan: { type: Type.STRING },
-                pekerjaan: { type: Type.STRING },
+    if (apiKey) {
+      const ai = new GoogleGenAI({ apiKey });
+      const parts: any[] = [];
+
+      if (ktpImage) {
+        const parsed = parseBase64(ktpImage);
+        parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.data } });
+        parts.push({ text: 'DOKUMEN DI ATAS ADALAH KARTU TANDA PENDUDUK (KTP) REPUBLIK INDONESIA.' });
+      }
+      if (kkImage) {
+        const parsed = parseBase64(kkImage);
+        parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.data } });
+        parts.push({ text: 'DOKUMEN DI ATAS ADALAH KARTU KELUARGA (KK) REPUBLIK INDONESIA.' });
+      }
+      if (passportImage) {
+        const parsed = parseBase64(passportImage);
+        parts.push({ inlineData: { mimeType: parsed.mimeType, data: parsed.data } });
+        parts.push({ text: 'DOKUMEN DI ATAS ADALAH PASPOR REPUBLIK INDONESIA PEMOHON.' });
+      }
+
+      parts.push({
+        text: `Anda adalah asisten legal imigrasi ahli untuk biro perjalanan umroh PT. ALZAM MANDIRI WISATA.
+Tugas Anda adalah membaca dan mengekstrak data dari foto/scan KTP, Kartu Keluarga (KK), dan Paspor yang diunggah.
+
+ATURAN EKSTRAKSI DOKUMEN INDONESIA:
+1. KTP:
+   - nik: Tepat 16 digit angka NIK.
+   - namaLengkap: HANYA nama lengkap pemohon sesuai dokumen tanpa awalan "Nama:".
+   - tempatLahir: HANYA nama kota atau kabupaten (contoh: "Serang", "Jepara", "Tangerang", "Bandung"). JANGAN masukkan tanggal di kolom ini!
+   - tanggalLahir: Tanggal lahir resmi bahasa Indonesia: "DD Bulan YYYY" (contoh: "13 April 1995").
+   - tempatTanggalLahir: "Kota, DD Bulan YYYY".
+   - jenisKelamin: "LAKI-LAKI" atau "PEREMPUAN".
+   - alamatKtp: Gabungan lengkap Jalan, RT/RW, Kelurahan/Desa, Kecamatan, Kota/Kabupaten, Provinsi.
+   - agama: "Islam", "Kristen", "Katolik", "Hindu", "Buddha", "Konghucu".
+   - statusPerkawinan: "Belum Kawin", "Kawin", "Cerai Hidup", "Cerai Mati".
+   - pekerjaan: Pekerjaan pemohon (contoh: "Wiraswasta", "Karyawan Swasta").
+   - kewarganegaraan: "WNI".
+
+2. Kartu Keluarga (KK):
+   - nomorKk: 16 digit angka yang tertera di bagian atas KK.
+   - namaKepalaKeluarga: Nama kepala keluarga yang tertera di KK.
+   - namaAyah: Nama ayah kandung dari tabel Kartu Keluarga pada baris pemohon (kolom "Nama Orang Tua -> Ayah").
+
+3. Paspor:
+   - nomorPasporLama: Nomor paspor pemohon (contoh: Y0195142, C8527774).
+   - dateOfExpiry: Tanggal habis berlaku paspor (contoh: 11/03/2027 atau 15 Mei 2027).
+   - namaMenjadi: Jika pemohon memiliki nama 1 atau 2 suku kata dan mengajukan penambahan nama 3 kata untuk umrah (contoh: ditambah nama ayah / kakek).
+
+Keluarkan hasil berupa JSON terstruktur murni.`
+      });
+
+      const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+
+      for (const modelCandidate of modelsToTry) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelCandidate,
+            contents: { parts },
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  nik: { type: Type.STRING },
+                  namaLengkap: { type: Type.STRING },
+                  tempatLahir: { type: Type.STRING },
+                  tanggalLahir: { type: Type.STRING },
+                  tempatTanggalLahir: { type: Type.STRING },
+                  jenisKelamin: { type: Type.STRING },
+                  alamatKtp: { type: Type.STRING },
+                  nomorKk: { type: Type.STRING },
+                  namaKepalaKeluarga: { type: Type.STRING },
+                  namaAyah: { type: Type.STRING },
+                  nomorPasporLama: { type: Type.STRING },
+                  dateOfExpiry: { type: Type.STRING },
+                  namaMenjadi: { type: Type.STRING },
+                  agama: { type: Type.STRING },
+                  statusPerkawinan: { type: Type.STRING },
+                  pekerjaan: { type: Type.STRING },
+                  kewarganegaraan: { type: Type.STRING },
+                }
               }
             }
-          }
-        });
+          });
 
-        if (response && response.text) {
-          extracted = JSON.parse(response.text.trim());
-          break;
+          if (response && response.text) {
+            extracted = JSON.parse(response.text.trim());
+            console.log(`[Vercel Serverless] Successfully extracted via model: ${modelCandidate}`);
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`[Vercel Serverless] Model ${modelCandidate} notice:`, err?.message || err);
         }
-      } catch (err) {
-        console.warn(`[Vercel Serverless AI] Model ${modelCandidate} notice:`, err);
       }
     }
 
-    const merged = {
-      ...defaultProfile,
-      ...clientOcrData,
-      ...extracted,
-      namaLengkap: toTitleCase(cleanApplicantName(extracted.namaLengkap || clientOcrData?.namaLengkap || defaultProfile.namaLengkap)),
-      namaKepalaKeluarga: toTitleCase(cleanApplicantName(extracted.namaKepalaKeluarga || clientOcrData?.namaKepalaKeluarga || defaultProfile.namaKepalaKeluarga)),
-      namaAyah: toTitleCase(cleanApplicantName(extracted.namaAyah || clientOcrData?.namaAyah || defaultProfile.namaAyah)),
-      alamatKtp: toTitleCase(extracted.alamatKtp || clientOcrData?.alamatKtp || defaultProfile.alamatKtp),
-      nomorPasporLama: (extracted.nomorPasporLama || clientOcrData?.nomorPasporLama || defaultProfile.nomorPasporLama || '').toUpperCase(),
-      dateOfExpiry: extracted.dateOfExpiry || clientOcrData?.dateOfExpiry || defaultProfile.dateOfExpiry,
-      expiredDatePaspor: extracted.dateOfExpiry || clientOcrData?.dateOfExpiry || defaultProfile.dateOfExpiry,
-      tujuanKantorImigrasi: finalTujuanImigrasi,
-      alamatKantorImigrasi: finalAlamatImigrasi,
+    // Merge extracted data with client OCR hints if server AI had gaps
+    const clientData = clientOcrData || {};
+    const rawNik = (extracted.nik || clientData.nik || '').replace(/\D/g, '');
+    const cleanNik = rawNik.length === 16 ? rawNik : (extracted.nik || clientData.nik || '');
+
+    // Mathematical NIK derivation for missing birth date or gender
+    let derivedBirthInfo: { tanggalLahir: string; jenisKelamin: 'LAKI-LAKI' | 'PEREMPUAN' } | null = null;
+    if (cleanNik && cleanNik.length === 16) {
+      derivedBirthInfo = extractBirthInfoFromNik(cleanNik);
+    }
+
+    const cleanNama = cleanApplicantName(extracted.namaLengkap || clientData.namaLengkap || '');
+    let finalTanggalLahir = formatIndonesianBirthDate(extracted.tanggalLahir || clientData.tanggalLahir || '');
+    let finalJenisKelamin = (extracted.jenisKelamin || clientData.jenisKelamin || '').toUpperCase();
+
+    if ((!finalTanggalLahir || finalTanggalLahir.length < 5) && derivedBirthInfo) {
+      finalTanggalLahir = derivedBirthInfo.tanggalLahir;
+    }
+    if (!finalJenisKelamin && derivedBirthInfo) {
+      finalJenisKelamin = derivedBirthInfo.jenisKelamin;
+    }
+
+    const finalTempatLahir = toTitleCase(extracted.tempatLahir || clientData.tempatLahir || '');
+    const finalTtl = finalTempatLahir && finalTanggalLahir
+      ? `${finalTempatLahir}, ${finalTanggalLahir}`
+      : (extracted.tempatTanggalLahir || clientData.tempatTanggalLahir || finalTanggalLahir || finalTempatLahir || '');
+
+    const finalPaspor = (extracted.nomorPasporLama || clientData.nomorPasporLama || '').toUpperCase();
+    const finalExp = extracted.dateOfExpiry || clientData.dateOfExpiry || clientData.expiredDatePaspor || '';
+
+    const finalData = {
+      ...officialBase,
+      nik: cleanNik,
+      namaLengkap: toTitleCase(cleanNama),
+      tempatLahir: finalTempatLahir,
+      tanggalLahir: finalTanggalLahir,
+      tempatTanggalLahir: finalTtl,
+      jenisKelamin: finalJenisKelamin || 'PEREMPUAN',
+      alamatKtp: toTitleCase(extracted.alamatKtp || clientData.alamatKtp || ''),
+      nomorKk: (extracted.nomorKk || clientData.nomorKk || '').replace(/\D/g, ''),
+      namaKepalaKeluarga: toTitleCase(cleanApplicantName(extracted.namaKepalaKeluarga || clientData.namaKepalaKeluarga || cleanNama)),
+      namaAyah: namaAyah
+        ? toTitleCase(cleanApplicantName(namaAyah))
+        : toTitleCase(cleanApplicantName(extracted.namaAyah || clientData.namaAyah || '')),
+      namaMenjadi: extracted.namaMenjadi ? toTitleCase(cleanApplicantName(extracted.namaMenjadi)) : '',
+      nomorPasporLama: finalPaspor,
+      dateOfExpiry: finalExp,
+      expiredDatePaspor: finalExp,
+      agama: extracted.agama || clientData.agama || 'Islam',
+      statusPerkawinan: toTitleCase(extracted.statusPerkawinan || clientData.statusPerkawinan || 'Belum Kawin'),
+      pekerjaan: toTitleCase(extracted.pekerjaan || clientData.pekerjaan || 'Wiraswasta'),
+      kewarganegaraan: extracted.kewarganegaraan || clientData.kewarganegaraan || 'WNI',
+      crossCheckStatus: {
+        nikValid: cleanNik.length === 16,
+        kkValid: Boolean(extracted.nomorKk && extracted.nomorKk.length === 16),
+        nameMatched: Boolean(cleanNama),
+        notes: cleanNama ? 'Ekstraksi dokumen identitas berhasil diproses.' : 'Dokumen berhasil dipindai. Silakan lengkapi formulir verifikasi.'
+      }
     };
 
-    return res.status(200).json({ success: true, data: merged });
+    return res.status(200).json({ success: true, data: finalData });
   } catch (error: any) {
     console.error('[Vercel Serverless] Error in analyze-documents:', error);
     return res.status(500).json({

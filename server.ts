@@ -24,8 +24,8 @@ const modelCooldownUntil = new Map<string, number>([
 ]);
 
 function getCandidateModels(): string[] {
-  // Ordered by priority: gemini-3.1-flash-lite & gemini-3.8-flash have highest quota & speed
-  const preferredOrder = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash'];
+  // Ordered by priority: gemini-3.8-flash & gemini-flash-latest offer highest quality vision OCR
+  const preferredOrder = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   const now = Date.now();
 
   const available = preferredOrder.filter((m) => {
@@ -433,69 +433,19 @@ app.post('/api/analyze-documents', async (req: Request, res: Response) => {
       });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
-    if (!apiKey) {
-      // Fallback response with simulated intelligent extraction if API key is not yet configured
-      console.warn('GEMINI_API_KEY is not set. Returning high-fidelity fallback response for PT. Alzam Mandiri Wisata.');
-      const fallbackData = {
-        templateType: selectedTemplate,
-        nik: '3604075304950002',
-        namaLengkap: 'Euis Cholishoh',
-        tempatLahir: 'Serang',
-        tanggalLahir: '13 April 1995',
-        tempatTanggalLahir: 'Serang, 13 April 1995',
-        jenisKelamin: 'PEREMPUAN',
-        alamatKtp: 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten',
-        nomorKk: '3604070000000000',
-        namaKepalaKeluarga: 'Euis Cholishoh',
-        namaAyah: namaAyah || 'H. Ahmad Subandi',
-        nomorPasporLama: 'Y0195142',
-        dateOfExpiry: '11/3/2027',
-        expiredDatePaspor: '11/3/2027',
-        agama: 'Islam',
-        pekerjaan: 'Wiraswasta',
-        statusPerkawinan: 'Belum Kawin',
-        kewarganegaraan: 'WNI',
-        negaraTujuan: 'Arab Saudi',
-        estimasiKeberangkatan: departureMonth || '16 - 24 November 2026',
-        jadwalKeberangkatanDanKepulangan: departureMonth || '16 - 24 November 2026',
-        keperluan: purpose || 'Surat Pernyataan dan Jaminan Paspor Umrah',
-        nomorSurat: generateLetterNumber(true),
-        nomorSuratPernyataan: generateLetterNumber(true),
-        perihal: selectedTemplate === 'pernyataan_jaminan' ? 'Surat Pernyataan dan Jaminan' : selectedTemplate === 'penambahan_nama' ? 'Permohonan Penambahan Nama Paspor' : selectedTemplate === 'perpanjangan_paspor' ? 'Permohonan Perpanjangan Paspor' : 'Permohonan Pembuatan Paspor',
-        tanggalSurat: formatIndonesianDate(new Date()),
-        kotaPenerbitan: 'Jakarta',
-        pejabatNama: 'Khairul Umam, ST, BA, MBA',
-        pejabatJabatan: 'Direktur Utama',
-        namaPerusahaan: 'PT. Alzam Mandiri Wisata',
-        taglinePerusahaan: 'Tour & Travel',
-        izinPpiu: '29042200007580004',
-        tanggalIzinPpiu: '02 Agustus 2022',
-        alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
-        teleponPerusahaan: '0815-9888-154',
-        emailPerusahaan: 'alzam@bisa.id',
-        websitePerusahaan: 'www.umrahbisa.com',
-        tujuanKantorImigrasi: finalTujuanImigrasi,
-        alamatKantorImigrasi: finalAlamatImigrasi,
-        crossCheckStatus: {
-          nikValid: true,
-          kkValid: true,
-          nameMatched: true,
-          notes: 'Ekstraksi dokumen identitas sukses sesuai data pemohon PT. Alzam Mandiri Wisata.'
-        }
-      };
-      return res.json({ success: true, data: fallbackData });
-    }
+    let response: any = null;
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
+    if (apiKey) {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
         }
-      }
-    });
+      });
 
     const parts: any[] = [];
 
@@ -690,6 +640,7 @@ Keluarkan hasil dalam format JSON terstruktur persis sesuai skema yang ditentuka
         }
       }
     }
+  }
 
     let parsedResult: any = {};
 

@@ -72990,7 +72990,7 @@ var modelCooldownUntil = /* @__PURE__ */ new Map([
   // Start in cooldown since free-tier limit for 3.5 was exhausted
 ]);
 function getCandidateModels() {
-  const preferredOrder = ["gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash"];
+  const preferredOrder = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
   const now = Date.now();
   const available = preferredOrder.filter((m2) => {
     const until = modelCooldownUntil.get(m2);
@@ -73377,9 +73377,9 @@ app.post("/api/analyze-documents", async (req, res) => {
     let finalAlamatImigrasi = alamatKantorImigrasi || "Jl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434";
     if (kantorImigrasiDanAlamat && typeof kantorImigrasiDanAlamat === "string" && kantorImigrasiDanAlamat.trim()) {
       if (kantorImigrasiDanAlamat.includes(",")) {
-        const parts2 = kantorImigrasiDanAlamat.split(",");
-        finalTujuanImigrasi = parts2[0].trim();
-        finalAlamatImigrasi = parts2.slice(1).join(",").trim();
+        const parts = kantorImigrasiDanAlamat.split(",");
+        finalTujuanImigrasi = parts[0].trim();
+        finalAlamatImigrasi = parts.slice(1).join(",").trim();
       } else {
         finalTujuanImigrasi = kantorImigrasiDanAlamat.trim();
         finalAlamatImigrasi = kantorImigrasiDanAlamat.trim();
@@ -73391,104 +73391,55 @@ app.post("/api/analyze-documents", async (req, res) => {
         error: "Mohon unggah minimal dokumen KTP, KK, atau Paspor untuk diproses."
       });
     }
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn("GEMINI_API_KEY is not set. Returning high-fidelity fallback response for PT. Alzam Mandiri Wisata.");
-      const fallbackData = {
-        templateType: selectedTemplate,
-        nik: "3604075304950002",
-        namaLengkap: "Euis Cholishoh",
-        tempatLahir: "Serang",
-        tanggalLahir: "13 April 1995",
-        tempatTanggalLahir: "Serang, 13 April 1995",
-        jenisKelamin: "PEREMPUAN",
-        alamatKtp: "Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten",
-        nomorKk: "3604070000000000",
-        namaKepalaKeluarga: "Euis Cholishoh",
-        namaAyah: namaAyah || "H. Ahmad Subandi",
-        nomorPasporLama: "Y0195142",
-        dateOfExpiry: "11/3/2027",
-        expiredDatePaspor: "11/3/2027",
-        agama: "Islam",
-        pekerjaan: "Wiraswasta",
-        statusPerkawinan: "Belum Kawin",
-        kewarganegaraan: "WNI",
-        negaraTujuan: "Arab Saudi",
-        estimasiKeberangkatan: departureMonth || "16 - 24 November 2026",
-        jadwalKeberangkatanDanKepulangan: departureMonth || "16 - 24 November 2026",
-        keperluan: purpose || "Surat Pernyataan dan Jaminan Paspor Umrah",
-        nomorSurat: generateLetterNumber(true),
-        nomorSuratPernyataan: generateLetterNumber(true),
-        perihal: selectedTemplate === "pernyataan_jaminan" ? "Surat Pernyataan dan Jaminan" : selectedTemplate === "penambahan_nama" ? "Permohonan Penambahan Nama Paspor" : selectedTemplate === "perpanjangan_paspor" ? "Permohonan Perpanjangan Paspor" : "Permohonan Pembuatan Paspor",
-        tanggalSurat: formatIndonesianDate(/* @__PURE__ */ new Date()),
-        kotaPenerbitan: "Jakarta",
-        pejabatNama: "Khairul Umam, ST, BA, MBA",
-        pejabatJabatan: "Direktur Utama",
-        namaPerusahaan: "PT. Alzam Mandiri Wisata",
-        taglinePerusahaan: "Tour & Travel",
-        izinPpiu: "29042200007580004",
-        tanggalIzinPpiu: "02 Agustus 2022",
-        alamatPerusahaan: "Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151",
-        teleponPerusahaan: "0815-9888-154",
-        emailPerusahaan: "alzam@bisa.id",
-        websitePerusahaan: "www.umrahbisa.com",
-        tujuanKantorImigrasi: finalTujuanImigrasi,
-        alamatKantorImigrasi: finalAlamatImigrasi,
-        crossCheckStatus: {
-          nikValid: true,
-          kkValid: true,
-          nameMatched: true,
-          notes: "Ekstraksi dokumen identitas sukses sesuai data pemohon PT. Alzam Mandiri Wisata."
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    let response = null;
+    if (apiKey) {
+      const ai = new GoogleGenAI2({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build"
+          }
         }
-      };
-      return res.json({ success: true, data: fallbackData });
-    }
-    const ai = new GoogleGenAI2({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build"
-        }
+      });
+      const parts = [];
+      if (ktpImage) {
+        const parsedKtp = parseBase64(ktpImage);
+        parts.push({
+          inlineData: {
+            mimeType: parsedKtp.mimeType,
+            data: parsedKtp.data
+          }
+        });
+        parts.push({
+          text: "GAMBAR DI ATAS ADALAH KARTU TANDA PENDUDUK (KTP) REPUBLIK INDONESIA."
+        });
       }
-    });
-    const parts = [];
-    if (ktpImage) {
-      const parsedKtp = parseBase64(ktpImage);
-      parts.push({
-        inlineData: {
-          mimeType: parsedKtp.mimeType,
-          data: parsedKtp.data
-        }
-      });
-      parts.push({
-        text: "GAMBAR DI ATAS ADALAH KARTU TANDA PENDUDUK (KTP) REPUBLIK INDONESIA."
-      });
-    }
-    if (kkImage) {
-      const parsedKk = parseBase64(kkImage);
-      parts.push({
-        inlineData: {
-          mimeType: parsedKk.mimeType,
-          data: parsedKk.data
-        }
-      });
-      parts.push({
-        text: "GAMBAR DI ATAS ADALAH KARTU KELUARGA (KK) REPUBLIK INDONESIA."
-      });
-    }
-    if (passportImage) {
-      const parsedPassport = parseBase64(passportImage);
-      parts.push({
-        inlineData: {
-          mimeType: parsedPassport.mimeType,
-          data: parsedPassport.data
-        }
-      });
-      parts.push({
-        text: "GAMBAR DI ATAS ADALAH DOKUMEN PASPOR REPUBLIK INDONESIA (PASPOR LAMA PEMOHON)."
-      });
-    }
-    const promptText = `
+      if (kkImage) {
+        const parsedKk = parseBase64(kkImage);
+        parts.push({
+          inlineData: {
+            mimeType: parsedKk.mimeType,
+            data: parsedKk.data
+          }
+        });
+        parts.push({
+          text: "GAMBAR DI ATAS ADALAH KARTU KELUARGA (KK) REPUBLIK INDONESIA."
+        });
+      }
+      if (passportImage) {
+        const parsedPassport = parseBase64(passportImage);
+        parts.push({
+          inlineData: {
+            mimeType: parsedPassport.mimeType,
+            data: parsedPassport.data
+          }
+        });
+        parts.push({
+          text: "GAMBAR DI ATAS ADALAH DOKUMEN PASPOR REPUBLIK INDONESIA (PASPOR LAMA PEMOHON)."
+        });
+      }
+      const promptText = `
 Anda adalah asisten administrasi legal dan konsuler ahli untuk biro perjalanan ibadah umroh dan haji ("PT. ALZAM MANDIRI WISATA").
 
 TUGAS ANDA:
@@ -73524,106 +73475,107 @@ Keperluan: ${purpose || "Permohonan Pembuatan Paspor Umrah"}
 
 Keluarkan hasil dalam format JSON terstruktur persis sesuai skema yang ditentukan.
 `;
-    parts.push({ text: promptText });
-    let response = null;
-    const modelsToTry = getCandidateModels();
-    for (const modelCandidate of modelsToTry) {
-      try {
-        console.log(`[AI OCR] Attempting extraction with model: ${modelCandidate}...`);
-        const generatePromise = ai.models.generateContent({
-          model: modelCandidate,
-          contents: { parts },
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                nik: {
-                  type: Type.STRING,
-                  description: "Nomor Induk Kependudukan 16 digit dari KTP"
-                },
-                namaLengkap: {
-                  type: Type.STRING,
-                  description: "Nama Lengkap pemohon sesuai ejaan KTP atau Paspor"
-                },
-                tempatLahir: {
-                  type: Type.STRING,
-                  description: "Tempat lahir pemohon dari KTP atau Paspor"
-                },
-                tanggalLahir: {
-                  type: Type.STRING,
-                  description: "Tanggal lahir pemohon dari KTP atau Paspor"
-                },
-                tempatTanggalLahir: {
-                  type: Type.STRING,
-                  description: "Tempat dan tanggal lahir digabung, contoh: Serang, 13 April 1995"
-                },
-                jenisKelamin: {
-                  type: Type.STRING,
-                  description: "Jenis Kelamin: LAKI-LAKI atau PEREMPUAN"
-                },
-                alamatKtp: {
-                  type: Type.STRING,
-                  description: "Alamat lengkap KTP mencakup RT/RW, Kelurahan, Kecamatan, Kota/Kab, Provinsi"
-                },
-                nomorKk: {
-                  type: Type.STRING,
-                  description: "Nomor Kartu Keluarga 16 digit dari KK"
-                },
-                namaKepalaKeluarga: {
-                  type: Type.STRING,
-                  description: "Nama Kepala Keluarga dari dokumen KK"
-                },
-                namaAyah: {
-                  type: Type.STRING,
-                  description: "Nama Ayah Kandung pemohon dari kolom Nama Ayah di tabel Kartu Keluarga (KK)"
-                },
-                nomorPasporLama: {
-                  type: Type.STRING,
-                  description: "Nomor Paspor Lama pemohon jika ada gambar paspor (contoh: Y0195142, C8527774)"
-                },
-                dateOfExpiry: {
-                  type: Type.STRING,
-                  description: "Date Of Expiry / Masa berlaku paspor jika ada gambar paspor"
-                },
-                agama: {
-                  type: Type.STRING,
-                  description: "Agama pemohon (Islam, Kristen, Katolik, dll)"
-                },
-                statusPerkawinan: {
-                  type: Type.STRING,
-                  description: "Status perkawinan pemohon jika terbaca"
-                },
-                pekerjaan: {
-                  type: Type.STRING,
-                  description: "Pekerjaan pemohon jika terbaca"
-                },
-                kewarganegaraan: {
-                  type: Type.STRING,
-                  description: "Kewarganegaraan (WNI)"
+      parts.push({ text: promptText });
+      let response2 = null;
+      const modelsToTry = getCandidateModels();
+      for (const modelCandidate of modelsToTry) {
+        try {
+          console.log(`[AI OCR] Attempting extraction with model: ${modelCandidate}...`);
+          const generatePromise = ai.models.generateContent({
+            model: modelCandidate,
+            contents: { parts },
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  nik: {
+                    type: Type.STRING,
+                    description: "Nomor Induk Kependudukan 16 digit dari KTP"
+                  },
+                  namaLengkap: {
+                    type: Type.STRING,
+                    description: "Nama Lengkap pemohon sesuai ejaan KTP atau Paspor"
+                  },
+                  tempatLahir: {
+                    type: Type.STRING,
+                    description: "Tempat lahir pemohon dari KTP atau Paspor"
+                  },
+                  tanggalLahir: {
+                    type: Type.STRING,
+                    description: "Tanggal lahir pemohon dari KTP atau Paspor"
+                  },
+                  tempatTanggalLahir: {
+                    type: Type.STRING,
+                    description: "Tempat dan tanggal lahir digabung, contoh: Serang, 13 April 1995"
+                  },
+                  jenisKelamin: {
+                    type: Type.STRING,
+                    description: "Jenis Kelamin: LAKI-LAKI atau PEREMPUAN"
+                  },
+                  alamatKtp: {
+                    type: Type.STRING,
+                    description: "Alamat lengkap KTP mencakup RT/RW, Kelurahan, Kecamatan, Kota/Kab, Provinsi"
+                  },
+                  nomorKk: {
+                    type: Type.STRING,
+                    description: "Nomor Kartu Keluarga 16 digit dari KK"
+                  },
+                  namaKepalaKeluarga: {
+                    type: Type.STRING,
+                    description: "Nama Kepala Keluarga dari dokumen KK"
+                  },
+                  namaAyah: {
+                    type: Type.STRING,
+                    description: "Nama Ayah Kandung pemohon dari kolom Nama Ayah di tabel Kartu Keluarga (KK)"
+                  },
+                  nomorPasporLama: {
+                    type: Type.STRING,
+                    description: "Nomor Paspor Lama pemohon jika ada gambar paspor (contoh: Y0195142, C8527774)"
+                  },
+                  dateOfExpiry: {
+                    type: Type.STRING,
+                    description: "Date Of Expiry / Masa berlaku paspor jika ada gambar paspor"
+                  },
+                  agama: {
+                    type: Type.STRING,
+                    description: "Agama pemohon (Islam, Kristen, Katolik, dll)"
+                  },
+                  statusPerkawinan: {
+                    type: Type.STRING,
+                    description: "Status perkawinan pemohon jika terbaca"
+                  },
+                  pekerjaan: {
+                    type: Type.STRING,
+                    description: "Pekerjaan pemohon jika terbaca"
+                  },
+                  kewarganegaraan: {
+                    type: Type.STRING,
+                    description: "Kewarganegaraan (WNI)"
+                  }
                 }
               }
             }
+          });
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(() => reject(new Error(`Model ${modelCandidate} timeout after 35s`)), 35e3)
+          );
+          response2 = await Promise.race([generatePromise, timeoutPromise]);
+          if (response2 && response2.text) {
+            modelCooldownUntil.delete(modelCandidate);
+            console.log(`[AI OCR] Extraction succeeded with model: ${modelCandidate}`);
+            break;
           }
-        });
-        const timeoutPromise = new Promise(
-          (_, reject) => setTimeout(() => reject(new Error(`Model ${modelCandidate} timeout after 35s`)), 35e3)
-        );
-        response = await Promise.race([generatePromise, timeoutPromise]);
-        if (response && response.text) {
-          modelCooldownUntil.delete(modelCandidate);
-          console.log(`[AI OCR] Extraction succeeded with model: ${modelCandidate}`);
-          break;
-        }
-      } catch (err) {
-        const errStr = String(err?.message || err);
-        const isQuota = errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED") || errStr.includes("quota");
-        const isHighDemand = errStr.includes("503") || errStr.includes("UNAVAILABLE") || errStr.includes("high demand");
-        if (isQuota || isHighDemand) {
-          modelCooldownUntil.set(modelCandidate, Date.now() + 6 * 60 * 1e3);
-          console.warn(`[AI OCR Notice] Model ${modelCandidate} temporarily rate-limited (${isQuota ? "429 Quota" : "503 Busy"}), cooling down for 6 mins.`);
-        } else {
-          console.warn(`[AI OCR Notice] Model ${modelCandidate} notice: ${errStr.slice(0, 150)}`);
+        } catch (err) {
+          const errStr = String(err?.message || err);
+          const isQuota = errStr.includes("429") || errStr.includes("RESOURCE_EXHAUSTED") || errStr.includes("quota");
+          const isHighDemand = errStr.includes("503") || errStr.includes("UNAVAILABLE") || errStr.includes("high demand");
+          if (isQuota || isHighDemand) {
+            modelCooldownUntil.set(modelCandidate, Date.now() + 6 * 60 * 1e3);
+            console.warn(`[AI OCR Notice] Model ${modelCandidate} temporarily rate-limited (${isQuota ? "429 Quota" : "503 Busy"}), cooling down for 6 mins.`);
+          } else {
+            console.warn(`[AI OCR Notice] Model ${modelCandidate} notice: ${errStr.slice(0, 150)}`);
+          }
         }
       }
     }

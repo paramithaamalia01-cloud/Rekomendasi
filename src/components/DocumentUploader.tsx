@@ -122,28 +122,30 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'jfif', 'heic', 'tif', 'tiff', 'svg'].includes(ext);
   };
 
-  // Helper to read file and compress oversized photos to crisp, lightweight Base64 (max 1920px)
+  // Helper to read file and compress oversized photos to crisp, lightweight Base64 (max 1400px, < 300KB)
   const readFileAsBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       const reader = new FileReader();
+
       reader.onload = (event) => {
         const result = event.target?.result as string;
         if (!result) {
-          reject(new Error('Gagal membaca berkas gambar.'));
+          reject(new Error('Gagal membaca berkas dokumen.'));
           return;
         }
 
-        // If file is already small (< 600KB), return directly
-        if (file.size < 600 * 1024) {
+        // For PDF documents (e.g. Kartu Keluarga digital Dukcapil), pass directly without Image canvas
+        if (isPdf) {
           resolve(result);
           return;
         }
 
-        // Resize oversized photo via Canvas to optimize upload speed and prevent network payload timeout
+        // For images, resize to max 1400px to ensure crisp OCR text while keeping payload < 300KB
         const img = new Image();
         img.onload = () => {
           try {
-            const maxDim = 1920;
+            const maxDim = 1400;
             let width = img.width;
             let height = img.height;
 
@@ -163,10 +165,12 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
             const ctx = canvas.getContext('2d');
 
             if (ctx) {
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
               ctx.fillStyle = '#ffffff';
               ctx.fillRect(0, 0, width, height);
               ctx.drawImage(img, 0, 0, width, height);
-              const compressedBase64 = canvas.toDataURL('image/jpeg', 0.88);
+              const compressedBase64 = canvas.toDataURL('image/jpeg', 0.84);
               resolve(compressedBase64);
             } else {
               resolve(result);
@@ -565,16 +569,16 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         onExtractionSuccess(
           formatApplicantData({
             templateType,
-            nik: browserData.nik || '3604075304950002',
-            namaLengkap: toTitleCase(cleanNama || 'Euis Cholishoh'),
-            tempatLahir: ttlParsed.tempatLahir || 'Serang',
-            tanggalLahir: ttlParsed.tanggalLahir || '13 April 1995',
-            tempatTanggalLahir: ttlParsed.tempatTanggalLahir || 'Serang, 13 April 1995',
+            nik: browserData.nik || '',
+            namaLengkap: cleanNama ? toTitleCase(cleanNama) : '',
+            tempatLahir: ttlParsed.tempatLahir || '',
+            tanggalLahir: ttlParsed.tanggalLahir || '',
+            tempatTanggalLahir: ttlParsed.tempatTanggalLahir || (ttlParsed.tempatLahir && ttlParsed.tanggalLahir ? `${ttlParsed.tempatLahir}, ${ttlParsed.tanggalLahir}` : ''),
             jenisKelamin: (browserData.jenisKelamin || ttlParsed.jenisKelamin || 'PEREMPUAN').toUpperCase(),
-            alamatKtp: toTitleCase(browserData.alamatKtp || 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten'),
-            nomorKk: browserData.nomorKk || '3604070000000000',
-            namaKepalaKeluarga: toTitleCase(browserData.namaKepalaKeluarga || cleanNama || 'Euis Cholishoh'),
-            namaAyah: toTitleCase(browserData.namaAyah || 'H. Ahmad Subandi'),
+            alamatKtp: browserData.alamatKtp ? toTitleCase(browserData.alamatKtp) : '',
+            nomorKk: browserData.nomorKk || '',
+            namaKepalaKeluarga: browserData.namaKepalaKeluarga ? toTitleCase(browserData.namaKepalaKeluarga) : (cleanNama ? toTitleCase(cleanNama) : ''),
+            namaAyah: browserData.namaAyah ? toTitleCase(browserData.namaAyah) : '',
             nomorPasporLama: (browserData.nomorPasporLama || '').toUpperCase(),
             dateOfExpiry: browserData.dateOfExpiry || '',
             expiredDatePaspor: browserData.dateOfExpiry || '',

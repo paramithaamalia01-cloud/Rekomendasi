@@ -1,5 +1,6 @@
 import { createWorker } from 'tesseract.js';
-import { toTitleCase, parsePlaceAndBirthDate, cleanApplicantName } from './letterFormatter';
+import { parseKtpOcrText } from './ktpOcrParser';
+import { toTitleCase, cleanApplicantName, extractBirthInfoFromNik } from './letterFormatter';
 
 export interface ExtractedDocumentResult {
   nik?: string;
@@ -74,6 +75,15 @@ export function extractPassportDataFromText(text: string) {
     result.dateOfExpiry = `${dd}/${mm}/${year}`;
   }
 
+  // MRZ Line 1 Name
+  const mrzLine1Match = text.match(/P<IDN([A-Z<]+)/i);
+  if (mrzLine1Match) {
+    const rawNames = mrzLine1Match[1].split('<<').map(s => s.replace(/</g, ' ').trim()).filter(Boolean);
+    if (rawNames.length > 0) {
+      result.namaLengkap = toTitleCase(rawNames.join(' '));
+    }
+  }
+
   return result;
 }
 
@@ -93,7 +103,7 @@ export async function processDocumentsInBrowser(
   const worker = await getBrowserOcrWorker();
   if (!worker) return result;
 
-  // Process Passport
+  // 1. Process Passport
   if (passportBase64) {
     try {
       const passOcr = await worker.recognize(passportBase64);
@@ -104,70 +114,61 @@ export async function processDocumentsInBrowser(
         result.dateOfExpiry = passData.dateOfExpiry;
         result.expiredDatePaspor = passData.dateOfExpiry;
       }
+      if (passData.namaLengkap && !result.namaLengkap) {
+        result.namaLengkap = passData.namaLengkap;
+      }
     } catch (err) {
       console.warn('[Client OCR] Passport extraction notice:', err);
     }
   }
 
-  // Process KTP
+  // 2. Process KTP with specialized ktpOcrParser
   if (ktpBase64) {
     try {
       const ktpOcr = await worker.recognize(ktpBase64);
       const text = ktpOcr?.data?.text || '';
+      const parsedKtp = parseKtpOcrText(text);
 
-      // NIK
-      const nikMatch = text.match(/\b\d{16}\b/);
-      if (nikMatch) {
-        result.nik = nikMatch[0];
+      if (parsedKtp.nik) result.nik = parsedKtp.nik;
+      if (parsedKtp.namaLengkap) result.namaLengkap = parsedKtp.namaLengkap;
+      if (parsedKtp.tempatLahir) result.tempatLahir = parsedKtp.tempatLahir;
+      if (parsedKtp.tanggalLahir) result.tanggalLahir = parsedKtp.tanggalLahir;
+      if (parsedKtp.tempatTanggalLahir) result.tempatTanggalLahir = parsedKtp.tempatTanggalLahir;
+      if (parsedKtp.jenisKelamin === 'LAKI-LAKI' || parsedKtp.jenisKelamin === 'PEREMPUAN') {
+        result.jenisKelamin = parsedKtp.jenisKelamin;
       }
-
-      // Name
-      const nameMatch = text.match(/(?:Nama|NAMA)\s*[:;\-.]*\s*([A-Za-z\s'.]{3,45})/i);
-      if (nameMatch) {
-        const candidate = cleanApplicantName(nameMatch[1]);
-        if (candidate.length > 2 && !/PROVINSI|KABUPATEN|KOTA|AGAMA|NIK/i.test(candidate)) {
-          result.namaLengkap = toTitleCase(candidate);
-        }
-      }
-
-      // TTL
-      const ttlMatch = text.match(/(?:Tempat\/Tgl\s*Lahir|TTL|Lahir)\s*[:;\-]?\s*([A-Za-z\s,0-9\-\/\.]+)/i);
-      if (ttlMatch) {
-        const parsed = parsePlaceAndBirthDate(undefined, undefined, ttlMatch[1], result.nik);
-        if (parsed.tempatLahir) result.tempatLahir = parsed.tempatLahir;
-        if (parsed.tanggalLahir) result.tanggalLahir = parsed.tanggalLahir;
-        if (parsed.tempatTanggalLahir) result.tempatTanggalLahir = parsed.tempatTanggalLahir;
-        if (parsed.jenisKelamin) result.jenisKelamin = parsed.jenisKelamin;
-      }
-
-      if (!result.jenisKelamin) {
-        if (/PEREMPUAN|WANITA/i.test(text)) result.jenisKelamin = 'PEREMPUAN';
-        else if (/LAKI-LAKI|PRIA/i.test(text)) result.jenisKelamin = 'LAKI-LAKI';
-      }
-
-      const almM = text.match(/(?:Alamat|ALAMAT)\s*[:;\-]?\s*([A-Za-z0-9\s/.,\-'"]{10,100})/i);
-      if (almM) {
-        result.alamatKtp = toTitleCase(almM[1].trim());
-      }
+      if (parsedKtp.alamatKtp) result.alamatKtp = parsedKtp.alamatKtp;
+      if (parsedKtp.agama) result.agama = parsedKtp.agama;
+      if (parsedKtp.statusPerkawinan) result.statusPerkawinan = parsedKtp.statusPerkawinan;
+      if (parsedKtp.pekerjaan) result.pekerjaan = parsedKtp.pekerjaan;
     } catch (err) {
       console.warn('[Client OCR] KTP extraction notice:', err);
     }
   }
 
-  // Process KK
+  // 3. Process KK
   if (kkBase64) {
     try {
       const kkOcr = await worker.recognize(kkBase64);
       const text = kkOcr?.data?.text || '';
+      const parsedKk = parseKtpOcrText(text);
 
-      const kkM = text.match(/\b\d{16}\b/g);
-      if (kkM) {
-        result.nomorKk = kkM.find((m: string) => m !== result.nik) || kkM[0];
+      if (parsedKk.nomorKk) {
+        result.nomorKk = parsedKk.nomorKk;
+      } else {
+        const kkM = text.match(/\b\d{16}\b/g);
+        if (kkM) {
+          result.nomorKk = kkM.find((m: string) => m !== result.nik) || kkM[0];
+        }
       }
 
-      const ayahM = text.match(/(?:Nama\s*Ayah|Ayah\s*Kandung)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
-      if (ayahM) {
-        result.namaAyah = toTitleCase(cleanApplicantName(ayahM[1]));
+      if (parsedKk.namaAyah) {
+        result.namaAyah = parsedKk.namaAyah;
+      } else {
+        const ayahM = text.match(/(?:Nama\s*Ayah|Ayah\s*Kandung)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
+        if (ayahM) {
+          result.namaAyah = toTitleCase(cleanApplicantName(ayahM[1]));
+        }
       }
 
       const kepalaM = text.match(/(?:Kepala\s*Keluarga)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
@@ -176,6 +177,24 @@ export async function processDocumentsInBrowser(
       }
     } catch (err) {
       console.warn('[Client OCR] KK extraction notice:', err);
+    }
+  }
+
+  // 4. Mathematical derivation from NIK if birth date or gender was not captured by text OCR
+  if (result.nik && result.nik.length === 16) {
+    const nikInfo = extractBirthInfoFromNik(result.nik);
+    if (nikInfo) {
+      if (!result.tanggalLahir || result.tanggalLahir.length < 5) {
+        result.tanggalLahir = nikInfo.tanggalLahir;
+      }
+      if (!result.jenisKelamin) {
+        result.jenisKelamin = nikInfo.jenisKelamin;
+      }
+      if (!result.tempatTanggalLahir) {
+        result.tempatTanggalLahir = result.tempatLahir
+          ? `${result.tempatLahir}, ${result.tanggalLahir}`
+          : result.tanggalLahir;
+      }
     }
   }
 
