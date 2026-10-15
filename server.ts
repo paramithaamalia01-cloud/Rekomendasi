@@ -8,8 +8,8 @@ import { createWorker } from 'tesseract.js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -44,7 +44,12 @@ async function getOcrWorker() {
       sharedOcrWorker = await createWorker(['eng', 'ind']);
     } catch (err) {
       console.warn('Falling back to english Tesseract worker:', err);
-      sharedOcrWorker = await createWorker('eng');
+      try {
+        sharedOcrWorker = await createWorker('eng');
+      } catch (err2) {
+        console.warn('Tesseract worker disabled in serverless:', err2);
+        return null;
+      }
     }
   }
   return sharedOcrWorker;
@@ -702,21 +707,23 @@ Keluarkan hasil dalam format JSON terstruktur persis sesuai skema yang ditentuka
       try {
         console.log('[Server OCR] Scanning passport image for passport number and expiry date...');
         const worker = await getOcrWorker();
-        const { data: passB64 } = parseBase64(passportImage);
-        const passBuf = Buffer.from(passB64, 'base64');
-        const passOcr = await worker.recognize(passBuf);
-        const text = passOcr?.data?.text || '';
-        console.log('[Server OCR] Passport text snippet:', text.replace(/\s+/g, ' ').substring(0, 140));
+        if (worker) {
+          const { data: passB64 } = parseBase64(passportImage);
+          const passBuf = Buffer.from(passB64, 'base64');
+          const passOcr = await worker.recognize(passBuf);
+          const text = passOcr?.data?.text || '';
+          console.log('[Server OCR] Passport text snippet:', text.replace(/\s+/g, ' ').substring(0, 140));
 
-        const passData = extractPassportDataFromText(text);
-        if (passData.nomorPasporLama && !parsedResult.nomorPasporLama) {
-          parsedResult.nomorPasporLama = passData.nomorPasporLama;
-        }
-        if (passData.dateOfExpiry && !parsedResult.dateOfExpiry) {
-          parsedResult.dateOfExpiry = passData.dateOfExpiry;
-        }
-        if (passData.namaLengkap && !parsedResult.namaLengkap) {
-          parsedResult.namaLengkap = passData.namaLengkap;
+          const passData = extractPassportDataFromText(text);
+          if (passData.nomorPasporLama && !parsedResult.nomorPasporLama) {
+            parsedResult.nomorPasporLama = passData.nomorPasporLama;
+          }
+          if (passData.dateOfExpiry && !parsedResult.dateOfExpiry) {
+            parsedResult.dateOfExpiry = passData.dateOfExpiry;
+          }
+          if (passData.namaLengkap && !parsedResult.namaLengkap) {
+            parsedResult.namaLengkap = passData.namaLengkap;
+          }
         }
       } catch (pErr) {
         console.warn('[Server OCR] Passport processing notice:', pErr);
@@ -728,76 +735,78 @@ Keluarkan hasil dalam format JSON terstruktur persis sesuai skema yang ditentuka
       try {
         console.log('[Server OCR] Scanning KTP image for NIK, Nama, and TTL...');
         const worker = await getOcrWorker();
-        const { data: ktpB64 } = parseBase64(ktpImage);
-        const ktpBuf = Buffer.from(ktpB64, 'base64');
-        const ktpOcr = await worker.recognize(ktpBuf);
-        const text = ktpOcr?.data?.text || '';
-        console.log('[Server OCR] KTP text snippet:', text.replace(/\s+/g, ' ').substring(0, 140));
+        if (worker) {
+          const { data: ktpB64 } = parseBase64(ktpImage);
+          const ktpBuf = Buffer.from(ktpB64, 'base64');
+          const ktpOcr = await worker.recognize(ktpBuf);
+          const text = ktpOcr?.data?.text || '';
+          console.log('[Server OCR] KTP text snippet:', text.replace(/\s+/g, ' ').substring(0, 140));
 
-        const lines = text.split('\n').map((l: string) => l.trim()).filter(Boolean);
+          const lines = text.split('\n').map((l: string) => l.trim()).filter(Boolean);
 
-        // NIK
-        if (!parsedResult.nik) {
-          const nikM = text.match(/\b\d{16}\b/);
-          if (nikM) {
-            parsedResult.nik = nikM[0];
-          } else {
-            for (const l of lines) {
-              if (/NIK|N\.I\.K/i.test(l)) {
-                const cleaned = l.replace(/[IolL]/g, '1').replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[Bb]/g, '8').replace(/[Zz]/g, '2').replace(/\D/g, '');
-                if (cleaned.length >= 16) {
-                  parsedResult.nik = cleaned.substring(0, 16);
-                  break;
+          // NIK
+          if (!parsedResult.nik) {
+            const nikM = text.match(/\b\d{16}\b/);
+            if (nikM) {
+              parsedResult.nik = nikM[0];
+            } else {
+              for (const l of lines) {
+                if (/NIK|N\.I\.K/i.test(l)) {
+                  const cleaned = l.replace(/[IolL]/g, '1').replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[Bb]/g, '8').replace(/[Zz]/g, '2').replace(/\D/g, '');
+                  if (cleaned.length >= 16) {
+                    parsedResult.nik = cleaned.substring(0, 16);
+                    break;
+                  }
                 }
               }
             }
           }
-        }
 
-        // Nama
-        if (!parsedResult.namaLengkap) {
-          const nameM = text.match(/(?:Nama|NAMA|Nama\s*Lengkap)\s*[:;\-\.]*\s*([A-Za-z\s'.]{3,45})/i);
-          if (nameM) {
-            const candidate = cleanApplicantName(nameM[1]);
-            if (candidate.length > 2 && !/PROVINSI|KABUPATEN|KOTA|AGAMA|GOL|DARAH|NIK/i.test(candidate)) {
-              parsedResult.namaLengkap = candidate;
-            }
-          }
+          // Nama
           if (!parsedResult.namaLengkap) {
-            const nikLineIdx = lines.findIndex((l: string) => /\b\d{16}\b/.test(l) || /NIK/i.test(l));
-            if (nikLineIdx !== -1 && lines[nikLineIdx + 1]) {
-              const candidate = cleanApplicantName(lines[nikLineIdx + 1]);
-              if (candidate.length > 2 && !/PROVINSI|KABUPATEN|KOTA|AGAMA|NIK|TEMPAT|LAHIR|GOL/i.test(candidate) && !/\d{5}/.test(candidate)) {
+            const nameM = text.match(/(?:Nama|NAMA|Nama\s*Lengkap)\s*[:;\-\.]*\s*([A-Za-z\s'.]{3,45})/i);
+            if (nameM) {
+              const candidate = cleanApplicantName(nameM[1]);
+              if (candidate.length > 2 && !/PROVINSI|KABUPATEN|KOTA|AGAMA|GOL|DARAH|NIK/i.test(candidate)) {
                 parsedResult.namaLengkap = candidate;
               }
             }
+            if (!parsedResult.namaLengkap) {
+              const nikLineIdx = lines.findIndex((l: string) => /\b\d{16}\b/.test(l) || /NIK/i.test(l));
+              if (nikLineIdx !== -1 && lines[nikLineIdx + 1]) {
+                const candidate = cleanApplicantName(lines[nikLineIdx + 1]);
+                if (candidate.length > 2 && !/PROVINSI|KABUPATEN|KOTA|AGAMA|NIK|TEMPAT|LAHIR|GOL/i.test(candidate) && !/\d{5}/.test(candidate)) {
+                  parsedResult.namaLengkap = candidate;
+                }
+              }
+            }
           }
-        }
 
-        // TTL
-        if (!parsedResult.tanggalLahir || !parsedResult.tempatLahir) {
-          const ttlM =
-            text.match(/(?:Tempat\/Tgl\s*Lahir|Tempat\/Tg[li!]\s*Lahir|Tempat\s*[\/,]\s*Tgl\s*Lahir|TTL|Lahir)\s*[:;\-]?\s*([A-Za-z\s]+)[,\s]+(\d{1,2}[-\s/.]+[A-Za-z0-9]+[-\s/.]+\d{2,4})/i) ||
-            text.match(/(?:Tempat\/Tgl\s*Lahir|Tempat\/Tg[li!]\s*Lahir|TTL)\s*[:;\-]?\s*([A-Za-z\s,0-9\-\/\.]+)/i);
+          // TTL
+          if (!parsedResult.tanggalLahir || !parsedResult.tempatLahir) {
+            const ttlM =
+              text.match(/(?:Tempat\/Tgl\s*Lahir|Tempat\/Tg[li!]\s*Lahir|Tempat\s*[\/,]\s*Tgl\s*Lahir|TTL|Lahir)\s*[:;\-]?\s*([A-Za-z\s]+)[,\s]+(\d{1,2}[-\s/.]+[A-Za-z0-9]+[-\s/.]+\d{2,4})/i) ||
+              text.match(/(?:Tempat\/Tgl\s*Lahir|Tempat\/Tg[li!]\s*Lahir|TTL)\s*[:;\-]?\s*([A-Za-z\s,0-9\-\/\.]+)/i);
 
-          if (ttlM) {
-            const rawVal = ttlM[0].replace(/^(?:Tempat\/Tgl\s*Lahir|Tempat\/Tg[li!]\s*Lahir|TTL|Lahir)\s*[:;\-]?\s*/i, '').trim();
-            const parsed = parsePlaceAndBirthDate(ttlM[1], ttlM[2], rawVal, parsedResult.nik);
-            if (!parsedResult.tempatLahir && parsed.tempatLahir) parsedResult.tempatLahir = parsed.tempatLahir;
-            if (!parsedResult.tanggalLahir && parsed.tanggalLahir) parsedResult.tanggalLahir = parsed.tanggalLahir;
-            if (!parsedResult.tempatTanggalLahir && parsed.tempatTanggalLahir) parsedResult.tempatTanggalLahir = parsed.tempatTanggalLahir;
-            if (!parsedResult.jenisKelamin && parsed.jenisKelamin) parsedResult.jenisKelamin = parsed.jenisKelamin;
+            if (ttlM) {
+              const rawVal = ttlM[0].replace(/^(?:Tempat\/Tgl\s*Lahir|Tempat\/Tg[li!]\s*Lahir|TTL|Lahir)\s*[:;\-]?\s*/i, '').trim();
+              const parsed = parsePlaceAndBirthDate(ttlM[1], ttlM[2], rawVal, parsedResult.nik);
+              if (!parsedResult.tempatLahir && parsed.tempatLahir) parsedResult.tempatLahir = parsed.tempatLahir;
+              if (!parsedResult.tanggalLahir && parsed.tanggalLahir) parsedResult.tanggalLahir = parsed.tanggalLahir;
+              if (!parsedResult.tempatTanggalLahir && parsed.tempatTanggalLahir) parsedResult.tempatTanggalLahir = parsed.tempatTanggalLahir;
+              if (!parsedResult.jenisKelamin && parsed.jenisKelamin) parsedResult.jenisKelamin = parsed.jenisKelamin;
+            }
           }
-        }
 
-        if (!parsedResult.jenisKelamin) {
-          if (/PEREMPUAN|WANITA|FEMALE/i.test(text)) parsedResult.jenisKelamin = 'PEREMPUAN';
-          else if (/LAKI-LAKI|PRIA|MALE/i.test(text)) parsedResult.jenisKelamin = 'LAKI-LAKI';
-        }
+          if (!parsedResult.jenisKelamin) {
+            if (/PEREMPUAN|WANITA|FEMALE/i.test(text)) parsedResult.jenisKelamin = 'PEREMPUAN';
+            else if (/LAKI-LAKI|PRIA|MALE/i.test(text)) parsedResult.jenisKelamin = 'LAKI-LAKI';
+          }
 
-        if (!parsedResult.alamatKtp) {
-          const almM = text.match(/(?:Alamat|ALAMAT)\s*[:;\-]?\s*([A-Za-z0-9\s/.,\-'"]{10,120})/i);
-          if (almM) parsedResult.alamatKtp = almM[1].trim();
+          if (!parsedResult.alamatKtp) {
+            const almM = text.match(/(?:Alamat|ALAMAT)\s*[:;\-]?\s*([A-Za-z0-9\s/.,\-'"]{10,120})/i);
+            if (almM) parsedResult.alamatKtp = almM[1].trim();
+          }
         }
       } catch (kErr) {
         console.warn('[Server OCR] KTP processing notice:', kErr);
@@ -809,25 +818,27 @@ Keluarkan hasil dalam format JSON terstruktur persis sesuai skema yang ditentuka
       try {
         console.log('[Server OCR] Scanning KK image for Nomor KK and Nama Ayah...');
         const worker = await getOcrWorker();
-        const { data: kkB64 } = parseBase64(kkImage);
-        const kkBuf = Buffer.from(kkB64, 'base64');
-        const kkOcr = await worker.recognize(kkBuf);
-        const text = kkOcr?.data?.text || '';
-        console.log('[Server OCR] KK text snippet:', text.replace(/\s+/g, ' ').substring(0, 140));
+        if (worker) {
+          const { data: kkB64 } = parseBase64(kkImage);
+          const kkBuf = Buffer.from(kkB64, 'base64');
+          const kkOcr = await worker.recognize(kkBuf);
+          const text = kkOcr?.data?.text || '';
+          console.log('[Server OCR] KK text snippet:', text.replace(/\s+/g, ' ').substring(0, 140));
 
-        const kkM = text.match(/\b\d{16}\b/g);
-        if (kkM && !parsedResult.nomorKk) {
-          parsedResult.nomorKk = kkM.find((m: string) => m !== parsedResult.nik) || kkM[0];
-        }
+          const kkM = text.match(/\b\d{16}\b/g);
+          if (kkM && !parsedResult.nomorKk) {
+            parsedResult.nomorKk = kkM.find((m: string) => m !== parsedResult.nik) || kkM[0];
+          }
 
-        const ayahM = text.match(/(?:Nama\s*Ayah|Ayah\s*Kandung|Nama\s*Ayah\s*Kandung|Nama\s*Orang\s*Tua)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
-        if (ayahM && !parsedResult.namaAyah && !ayahM[1].toUpperCase().includes('KEPALA')) {
-          parsedResult.namaAyah = cleanApplicantName(ayahM[1]);
-        }
+          const ayahM = text.match(/(?:Nama\s*Ayah|Ayah\s*Kandung|Nama\s*Ayah\s*Kandung|Nama\s*Orang\s*Tua)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
+          if (ayahM && !parsedResult.namaAyah && !ayahM[1].toUpperCase().includes('KEPALA')) {
+            parsedResult.namaAyah = cleanApplicantName(ayahM[1]);
+          }
 
-        const kepalaM = text.match(/(?:Kepala\s*Keluarga)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
-        if (kepalaM && !parsedResult.namaKepalaKeluarga) {
-          parsedResult.namaKepalaKeluarga = cleanApplicantName(kepalaM[1]);
+          const kepalaM = text.match(/(?:Kepala\s*Keluarga)\s*[:;\-]?\s*([A-Za-z\s'.]{3,40})/i);
+          if (kepalaM && !parsedResult.namaKepalaKeluarga) {
+            parsedResult.namaKepalaKeluarga = cleanApplicantName(kepalaM[1]);
+          }
         }
       } catch (kkErr) {
         console.warn('[Server OCR] KK processing notice:', kkErr);

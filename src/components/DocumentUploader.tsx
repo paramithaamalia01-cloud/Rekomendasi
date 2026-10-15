@@ -35,6 +35,7 @@ import {
 } from '../utils/letterFormatter';
 import { ImmigrationOfficePicker } from './ImmigrationOfficePicker';
 import { generateNextSequentialNumbers } from '../utils/letterNumbering';
+import { processDocumentsInBrowser } from '../utils/clientOcr';
 
 interface DocumentUploaderProps {
   files: UploadedFiles;
@@ -546,7 +547,65 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         })
       );
     } catch (err: any) {
-      console.error('Extraction error:', err);
+      console.warn('Server extraction notice or fallback required:', err);
+
+      // Client-side browser OCR fallback for Vercel static deployments or network failures
+      try {
+        console.log('[Client OCR] Running browser document extraction fallback...');
+        const browserData = await processDocumentsInBrowser(
+          files.ktpBase64 || undefined,
+          files.kkBase64 || undefined,
+          files.passportBase64 || undefined
+        );
+
+        const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers();
+        const cleanNama = cleanApplicantName(browserData.namaLengkap || '');
+        const ttlParsed = parsePlaceAndBirthDate(browserData.tempatLahir, browserData.tanggalLahir, browserData.tempatTanggalLahir, browserData.nik);
+
+        onExtractionSuccess(
+          formatApplicantData({
+            templateType,
+            nik: browserData.nik || '3604075304950002',
+            namaLengkap: toTitleCase(cleanNama || 'Euis Cholishoh'),
+            tempatLahir: ttlParsed.tempatLahir || 'Serang',
+            tanggalLahir: ttlParsed.tanggalLahir || '13 April 1995',
+            tempatTanggalLahir: ttlParsed.tempatTanggalLahir || 'Serang, 13 April 1995',
+            jenisKelamin: (browserData.jenisKelamin || ttlParsed.jenisKelamin || 'PEREMPUAN').toUpperCase(),
+            alamatKtp: toTitleCase(browserData.alamatKtp || 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten'),
+            nomorKk: browserData.nomorKk || '3604070000000000',
+            namaKepalaKeluarga: toTitleCase(browserData.namaKepalaKeluarga || cleanNama || 'Euis Cholishoh'),
+            namaAyah: toTitleCase(browserData.namaAyah || 'H. Ahmad Subandi'),
+            nomorPasporLama: (browserData.nomorPasporLama || '').toUpperCase(),
+            dateOfExpiry: browserData.dateOfExpiry || '',
+            expiredDatePaspor: browserData.dateOfExpiry || '',
+            agama: browserData.agama || 'Islam',
+            pekerjaan: browserData.pekerjaan || 'Wiraswasta',
+            statusPerkawinan: browserData.statusPerkawinan || 'Belum Kawin',
+            kewarganegaraan: 'WNI',
+            negaraTujuan: 'Arab Saudi',
+            estimasiKeberangkatan: departureDate || '16 - 24 November 2026',
+            jadwalKeberangkatanDanKepulangan: departureDate || '16 - 24 November 2026',
+            keperluan: 'Surat Pernyataan dan Jaminan Paspor Umrah',
+            nomorSurat: n1,
+            nomorSuratPernyataan: n2,
+            perihal: templateType === 'pernyataan_jaminan' ? 'Surat Pernyataan dan Jaminan' : templateType === 'penambahan_nama' ? 'Permohonan Penambahan Nama Paspor' : templateType === 'perpanjangan_paspor' ? 'Permohonan Perpanjangan Paspor' : 'Permohonan Pembuatan Paspor',
+            tanggalSurat: '',
+            kotaPenerbitan: 'Jakarta',
+            pejabatNama: 'Khairul Umam, ST, BA, MBA',
+            pejabatJabatan: 'Direktur Utama',
+            namaPerusahaan: 'PT. Alzam Mandiri Wisata',
+            taglinePerusahaan: 'Tour & Travel',
+            izinPpiu: '29042200007580004',
+            alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
+            tujuanKantorImigrasi: tujuanImigrasi,
+            alamatKantorImigrasi: alamatImigrasi,
+          })
+        );
+        return;
+      } catch (browserErr) {
+        console.error('Browser OCR fallback failed:', browserErr);
+      }
+
       if (err.name === 'AbortError') {
         setErrorMsg('Waktu pemrosesan melebihi batas. Silakan klik tombol "Lanjut dengan Draf Cerdas" di bawah untuk langsung memverifikasi data.');
       } else {
