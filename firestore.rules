@@ -47,8 +47,8 @@ service cloud.firestore {
 
     // Letter records collection
     match /letters/{letterId} {
-      allow get: if isSignedIn() && isValidId(letterId) && resource.data.userId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(letterId) && (resource == null || resource.data.userId == request.auth.uid);
+      allow list: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
       allow create: if isSignedIn() && isValidId(letterId) && incoming().userId == request.auth.uid && isValidLetter(incoming());
       allow update: if isSignedIn() && isValidId(letterId) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && isValidLetter(incoming());
       allow delete: if isSignedIn() && isValidId(letterId) && existing().userId == request.auth.uid;

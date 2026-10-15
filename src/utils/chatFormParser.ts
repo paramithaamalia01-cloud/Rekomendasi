@@ -1,5 +1,11 @@
 import { ApplicantData, LetterTemplateType } from '../types';
-import { toTitleCase } from './letterFormatter';
+import {
+  toTitleCase,
+  parsePlaceAndBirthDate,
+  cleanApplicantName,
+  extractBirthInfoFromNik,
+  formatIndonesianBirthDate,
+} from './letterFormatter';
 
 export interface ChatFormField {
   key: keyof ApplicantData | 'kantorImigrasiDanAlamat';
@@ -236,7 +242,7 @@ export function parseChatFormText(
     /^(?:Nama|Nama Lengkap)\s*[:=]\s*(.+)/i,
   ]);
   if (namaVal) {
-    result.namaLengkap = toTitleCase(namaVal);
+    result.namaLengkap = toTitleCase(cleanApplicantName(namaVal));
     extractedCount++;
   }
 
@@ -246,14 +252,12 @@ export function parseChatFormText(
     /^(?:Tempat[\/,]\s*Tgl\s*Lahir|Tanggal Lahir)\s*[:=]\s*(.+)/i,
   ]);
   if (ttlVal) {
-    result.tempatTanggalLahir = toTitleCase(ttlVal);
-    if (ttlVal.includes(',')) {
-      const parts = ttlVal.split(',');
-      result.tempatLahir = toTitleCase(parts[0].trim());
-      result.tanggalLahir = parts.slice(1).join(',').trim();
-    } else {
-      result.tempatLahir = toTitleCase(ttlVal);
-      result.tanggalLahir = ttlVal;
+    const parsedTtl = parsePlaceAndBirthDate(undefined, undefined, ttlVal, result.nik);
+    result.tempatLahir = parsedTtl.tempatLahir;
+    result.tanggalLahir = parsedTtl.tanggalLahir;
+    result.tempatTanggalLahir = parsedTtl.tempatTanggalLahir;
+    if (!result.jenisKelamin && parsedTtl.jenisKelamin) {
+      result.jenisKelamin = parsedTtl.jenisKelamin;
     }
     extractedCount++;
   }
@@ -267,6 +271,17 @@ export function parseChatFormText(
     const cleanNik = nikVal.replace(/[^0-9]/g, '');
     if (cleanNik.length >= 10) {
       result.nik = cleanNik;
+      // Derive birth info if available from NIK
+      if (cleanNik.length === 16) {
+        const info = extractBirthInfoFromNik(cleanNik);
+        if (info) {
+          if (!result.tanggalLahir) {
+            result.tanggalLahir = info.tanggalLahir;
+            result.tempatTanggalLahir = result.tempatLahir ? `${result.tempatLahir}, ${info.tanggalLahir}` : info.tanggalLahir;
+          }
+          result.jenisKelamin = info.jenisKelamin;
+        }
+      }
       extractedCount++;
     }
   }

@@ -2,6 +2,8 @@ import { ApplicantData } from '../types';
 
 // Format letter according to selected template
 export function formatOfficialLetterText(data: ApplicantData): string {
+  const effectiveDisplayName = getEffectiveApplicantDisplayName(data);
+
   if (data.templateType === 'permohonan_paspor') {
     return `${data.namaPerusahaan || 'PT. ALZAM MANDIRI WISATA'}
 ${data.taglinePerusahaan || 'Tour & Travel'}
@@ -20,7 +22,7 @@ ${data.alamatKantorImigrasi || 'Jl. Jendral Sudirman Km. 6,5, Desa Perawas, Kec.
 Assalamu’alaikum warahmatullahi wabarakatuh
 Sehubungan dengan akan adanya keberangkatan jamaah umrah ${data.namaPerusahaan || 'PT. Alzam Mandiri Wisata'} dengan izin Penyelenggara Perjalanan Ibadah Umrah yang diterbitkan ${data.tanggalIzinPpiu || '02 Agustus 2022'} oleh Pemerintah Republik Indonesia, maka dengan ini kami mengajukan permohonan guna pembuatan paspor atas nama :
 
-Nama                 : ${data.namaLengkap}
+Nama                 : ${effectiveDisplayName}
 Tempat/Tanggal Lahir : ${data.tempatTanggalLahir}
 NIK                  : ${data.nik}
 Alamat               : ${data.alamatKtp}${data.namaAyah ? `\nNama Ayah Kandung    : ${data.namaAyah}` : ''}${data.nomorPasporLama ? `\nNo. Paspor Lama      : ${data.nomorPasporLama} (Satu Kata Pada Nama / Paspor Berlaku)` : ''}${data.expiredDatePaspor ? `\nMasa Berlaku Paspor  : ${data.expiredDatePaspor}` : ''}
@@ -57,7 +59,7 @@ Jabatan    : ${data.pejabatJabatan || 'Direktur Utama'}
 Perusahaan : ${data.namaPerusahaan || 'PT. Alzam Mandiri Wisata'}
 
 Bersama ini kami menyatakan:
-Nama                 : ${data.namaLengkap}
+Nama                 : ${effectiveDisplayName}
 Tempat/Tanggal Lahir : ${data.tempatTanggalLahir}
 NIK                  : ${data.nik}
 Alamat               : ${data.alamatKtp}
@@ -101,7 +103,7 @@ Bersama ini dengan hormat kami pengurus ${data.namaPerusahaan || 'PT. Alzam Mand
 
 Nama                 : ${toTitleCase(data.namaLengkap)}
 Tempat/Tanggal Lahir : ${toTitleCase(data.tempatTanggalLahir)}
-Menjadi              : ${toTitleCase(data.namaMenjadi || data.namaLengkap)}
+Menjadi              : ${effectiveDisplayName}
 Nomor Paspor Lama    : ${data.nomorPasporLama || '-'}
 
 adalah benar calon jamaah umrah ${data.namaPerusahaan || 'PT. Alzam Mandiri Wisata'} sebagai penyelenggara resmi perjalanan umrah dan kami bertanggung jawab dan menjamin sepenuhnya terhadap calon jamaah umrah kami dengan memperhatikan hal-hal sebagai berikut :
@@ -475,20 +477,270 @@ export function toTitleCase(str: string): string {
     .join('');
 }
 
+export function getTodayIndonesianDate(date = new Date()): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  }).format(date);
+}
+
+/**
+ * Gets effective applicant name for letter display.
+ * Automatically appends father's name for single-word applicant names (e.g. "SUHARDI" + "AHMAD" -> "Suhardi Ahmad")
+ */
+export function getEffectiveApplicantDisplayName(data: ApplicantData): string {
+  const cleanNama = toTitleCase(data.namaLengkap || '').trim();
+  const cleanAyah = data.namaAyah ? toTitleCase(data.namaAyah).trim() : '';
+  const cleanMenjadi = data.namaMenjadi ? toTitleCase(data.namaMenjadi).trim() : '';
+
+  if (data.templateType === 'penambahan_nama' && cleanMenjadi && cleanMenjadi !== cleanNama) {
+    return cleanMenjadi;
+  }
+
+  const words = cleanNama.split(/\s+/).filter(Boolean);
+  if (words.length === 1 && cleanAyah) {
+    return `${cleanNama} ${cleanAyah}`;
+  }
+
+  return cleanNama;
+}
+
+export const INDO_MONTH_MAP: Record<string, string> = {
+  '1': 'Januari', '01': 'Januari', 'jan': 'Januari', 'januari': 'Januari', 'january': 'Januari',
+  '2': 'Februari', '02': 'Februari', 'feb': 'Februari', 'februari': 'Februari', 'february': 'Februari',
+  '3': 'Maret', '03': 'Maret', 'mar': 'Maret', 'maret': 'Maret', 'march': 'Maret',
+  '4': 'April', '04': 'April', 'apr': 'April', 'april': 'April',
+  '5': 'Mei', '05': 'Mei', 'may': 'Mei', 'mei': 'Mei',
+  '6': 'Juni', '06': 'Juni', 'jun': 'Juni', 'juni': 'Juni', 'june': 'Juni',
+  '7': 'Juli', '07': 'Juli', 'jul': 'Juli', 'juli': 'Juli', 'july': 'Juli',
+  '8': 'Agustus', '08': 'Agustus', 'agu': 'Agustus', 'agt': 'Agustus', 'agustus': 'Agustus', 'aug': 'Agustus', 'august': 'Agustus',
+  '9': 'September', '09': 'September', 'sep': 'September', 'sept': 'September', 'september': 'September',
+  '10': 'Oktober', 'okt': 'Oktober', 'oktober': 'Oktober', 'oct': 'Oktober', 'october': 'Oktober',
+  '11': 'November', 'nov': 'November', 'november': 'November',
+  '12': 'Desember', 'des': 'Desember', 'desember': 'Desember', 'dec': 'Desember', 'december': 'Desember',
+};
+
+/**
+ * Standardize any Indonesian date of birth into official "DD Bulan YYYY" format
+ * (e.g. "30-11-1999" -> "30 November 1999", "13-04-1995" -> "13 April 1995")
+ */
+export function formatIndonesianBirthDate(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+
+  // Check DD Bulan YYYY (e.g. "13 April 1995", "30 November 1999")
+  const dbyMatch = trimmed.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (dbyMatch) {
+    const day = parseInt(dbyMatch[1], 10);
+    const mLower = dbyMatch[2].toLowerCase();
+    const month = INDO_MONTH_MAP[mLower] || (dbyMatch[2].charAt(0).toUpperCase() + dbyMatch[2].slice(1).toLowerCase());
+    return `${day} ${month} ${dbyMatch[3]}`;
+  }
+
+  // Check DD-MM-YYYY or DD/MM/YYYY or DD.MM.YYYY
+  const dmyMatch = trimmed.match(/^(\d{1,2})[-\/.](\d{1,2}|[A-Za-z]{3,9})[-\/.](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const mRaw = dmyMatch[2].toLowerCase();
+    const month = INDO_MONTH_MAP[mRaw] || mRaw;
+    let year = parseInt(dmyMatch[3], 10);
+    if (year < 100) {
+      const curYy = new Date().getFullYear() % 100;
+      year = year <= curYy ? 2000 + year : 1900 + year;
+    }
+    return `${day} ${month} ${year}`;
+  }
+
+  // Check YYYY-MM-DD
+  const ymdMatch = trimmed.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+  if (ymdMatch) {
+    const year = ymdMatch[1];
+    const month = INDO_MONTH_MAP[parseInt(ymdMatch[2], 10)] || ymdMatch[2];
+    const day = parseInt(ymdMatch[3], 10);
+    return `${day} ${month} ${year}`;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Mathematically derives birth date and gender from 16-digit Indonesian NIK
+ * Digits 7-8: Tanggal Lahir (>40 for female, <=40 for male)
+ * Digits 9-10: Bulan Lahir
+ * Digits 11-12: 2 digit tahun
+ */
+export function extractBirthInfoFromNik(nik: string): { tanggalLahir: string; jenisKelamin: 'LAKI-LAKI' | 'PEREMPUAN' } | null {
+  if (!nik || typeof nik !== 'string') return null;
+  const clean = nik.replace(/\D/g, '');
+  if (clean.length !== 16) return null;
+
+  const dayRaw = parseInt(clean.substring(6, 8), 10);
+  const month = parseInt(clean.substring(8, 10), 10);
+  const yy = parseInt(clean.substring(10, 12), 10);
+
+  if (month < 1 || month > 12) return null;
+
+  let jk: 'LAKI-LAKI' | 'PEREMPUAN' = 'LAKI-LAKI';
+  let day = dayRaw;
+  if (dayRaw > 40) {
+    jk = 'PEREMPUAN';
+    day = dayRaw - 40;
+  }
+  if (day < 1 || day > 31) return null;
+
+  const curYy = new Date().getFullYear() % 100;
+  const year = yy <= curYy ? 2000 + yy : 1900 + yy;
+
+  const months = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  return {
+    tanggalLahir: `${day} ${months[month]} ${year}`,
+    jenisKelamin: jk,
+  };
+}
+
+/**
+ * Strips common OCR / form prefixes like "Nama :", "Nama Pemohon :", "Full Name :"
+ */
+export function cleanApplicantName(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/^(?:Nama|NAMA|Nama\s*Lengkap|Nama\s*Pemohon|Name|Full\s*Name)\s*[:;\-.]*\s*/i, '')
+    .replace(/^[:;\-.\s]+|[:;\-.\s]+$/g, '')
+    .trim();
+}
+
+export const DATE_INDO_REGEX = /(?:^|[,\s\.\-:])(\d{1,2}[\s\/\.-]+(?:Jan(?:uari)?|Feb(?:ruari)?|Mar(?:et)?|March|Apr(?:il)?|Mei|May|Jun(?:i)?|June|Jul(?:i)?|July|Agu(?:stus)?|Agt|Aug(?:ust)?|Sep(?:tember)?|Okt(?:ober)?|Oct(?:ober)?|Nov(?:ember)?|Des(?:ember)?|Dec(?:ember)?|\d{1,2})[\s\/\.-]+\d{2,4}|\d{4}[\s\/\.-]+\d{1,2}[\s\/\.-]+\d{1,2})/i;
+
+/**
+ * Intelligently separates and standardizes Place of Birth and Date of Birth
+ * Handles with/without comma, multi-word city names, and NIK derivations
+ */
+export function parsePlaceAndBirthDate(
+  placeInput?: string,
+  dateInput?: string,
+  fullTtlInput?: string,
+  nik?: string
+): { tempatLahir: string; tanggalLahir: string; tempatTanggalLahir: string; jenisKelamin?: 'LAKI-LAKI' | 'PEREMPUAN' } {
+  let tempat = (placeInput || '').trim();
+  let tanggal = (dateInput || '').trim();
+  let ttl = (fullTtlInput || '').trim();
+
+  // If fullTtl is provided, or if tempat contains embedded date digits
+  const combinedCandidate = ttl || (tempat && /\d/.test(tempat) ? tempat : '');
+  if (combinedCandidate) {
+    const dMatch = combinedCandidate.match(DATE_INDO_REGEX);
+    if (dMatch) {
+      if (!tanggal) {
+        tanggal = dMatch[1].trim();
+      }
+      if (!tempat || /\d/.test(tempat)) {
+        tempat = combinedCandidate
+          .replace(dMatch[0], '')
+          .replace(/[,\s:;\-]+$/, '')
+          .replace(/^[,\s:;\-]+/, '')
+          .trim();
+      }
+    } else if (combinedCandidate.includes(',')) {
+      const parts = combinedCandidate.split(/,\s*/);
+      if (!tempat || /\d/.test(tempat)) tempat = parts[0].trim();
+      if (!tanggal) tanggal = parts.slice(1).join(', ').trim();
+    }
+  }
+
+  // If dateInput itself has an embedded place name (e.g. "Jepara, 30 November 1999" passed as dateInput)
+  if (tanggal && /[A-Za-z]{3,}/.test(tanggal) && !tempat) {
+    const dMatch = tanggal.match(DATE_INDO_REGEX);
+    if (dMatch) {
+      const extractedPlace = tanggal.replace(dMatch[0], '').replace(/[,\s:;\-]+$/, '').replace(/^[,\s:;\-]+/, '').trim();
+      if (extractedPlace) {
+        tempat = extractedPlace;
+        tanggal = dMatch[1].trim();
+      }
+    }
+  }
+
+  // Clean tempat from any remaining numbers, colons, or punctuation
+  tempat = tempat
+    .replace(/[:;\-]?\s*\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2,4}.*$/, '')
+    .replace(/\d+/g, '')
+    .replace(/^[,\s:;\-]+|[,\s:;\-]+$/g, '')
+    .trim();
+
+  // Clean and standardize tanggal into official Indonesian DD Bulan YYYY format
+  let cleanTanggal = formatIndonesianBirthDate(tanggal);
+
+  // Derive from NIK if date is missing or incomplete
+  let derivedInfo: { tanggalLahir: string; jenisKelamin: 'LAKI-LAKI' | 'PEREMPUAN' } | null = null;
+  if (nik) {
+    derivedInfo = extractBirthInfoFromNik(nik);
+    if ((!cleanTanggal || cleanTanggal.length < 5) && derivedInfo) {
+      cleanTanggal = derivedInfo.tanggalLahir;
+    }
+  }
+
+  const finalPlace = toTitleCase(tempat);
+  const finalTtl = finalPlace && cleanTanggal ? `${finalPlace}, ${cleanTanggal}` : (cleanTanggal || finalPlace || ttl);
+
+  return {
+    tempatLahir: finalPlace,
+    tanggalLahir: cleanTanggal,
+    tempatTanggalLahir: finalTtl,
+    jenisKelamin: derivedInfo?.jenisKelamin,
+  };
+}
+
+/**
+ * Automatically appends father's name for single-word applicant names into namaMenjadi (without corrupting namaLengkap)
+ */
+export function computeAutoNamaMenjadi(namaLengkap: string, namaAyah?: string, currentNamaMenjadi?: string): string {
+  const cleanNama = cleanApplicantName(namaLengkap || '').trim();
+  const cleanAyah = (namaAyah || '').trim();
+  const words = cleanNama.split(/\s+/).filter(Boolean);
+
+  if (words.length === 1 && cleanAyah) {
+    return `${toTitleCase(cleanNama)} ${toTitleCase(cleanAyah)}`;
+  }
+
+  if (currentNamaMenjadi && currentNamaMenjadi.trim() && currentNamaMenjadi.trim() !== cleanNama) {
+    return toTitleCase(currentNamaMenjadi);
+  }
+
+  return toTitleCase(cleanNama);
+}
+
 /**
  * Ensures entire ApplicantData object has clean Title Case casing
  * for all human-readable text fields (Name, TTL, Address, etc.)
+ * CRITICAL: NEVER automatically mutates namaLengkap into father's name!
  */
 export function formatApplicantData(data: ApplicantData): ApplicantData {
+  const formattedNama = toTitleCase(cleanApplicantName(data.namaLengkap || ''));
+  const formattedAyah = data.namaAyah ? toTitleCase(data.namaAyah) : undefined;
+
+  // Harmonize place and date of birth
+  const ttlParsed = parsePlaceAndBirthDate(data.tempatLahir, data.tanggalLahir, data.tempatTanggalLahir, data.nik);
+
+  // Compute 3-word expanded name for namaMenjadi
+  const autoNamaMenjadi = computeAutoNamaMenjadi(formattedNama, formattedAyah, data.namaMenjadi);
+  const todayStr = getTodayIndonesianDate();
+
+  // Determine gender (prioritize data.jenisKelamin, fallback to NIK derivation)
+  const finalJk = (data.jenisKelamin || ttlParsed.jenisKelamin || 'PEREMPUAN').toUpperCase();
+
   return {
     ...data,
-    namaLengkap: toTitleCase(data.namaLengkap),
-    namaMenjadi: data.namaMenjadi ? toTitleCase(data.namaMenjadi) : undefined,
-    tempatLahir: toTitleCase(data.tempatLahir),
-    tempatTanggalLahir: toTitleCase(data.tempatTanggalLahir),
+    tanggalSurat: (!data.tanggalSurat || data.tanggalSurat.trim() === '') ? todayStr : data.tanggalSurat,
+    namaLengkap: formattedNama,
+    namaMenjadi: autoNamaMenjadi,
+    tempatLahir: ttlParsed.tempatLahir,
+    tanggalLahir: ttlParsed.tanggalLahir,
+    tempatTanggalLahir: ttlParsed.tempatTanggalLahir,
+    jenisKelamin: finalJk,
     alamatKtp: toTitleCase(data.alamatKtp),
     namaKepalaKeluarga: toTitleCase(data.namaKepalaKeluarga),
-    namaAyah: data.namaAyah ? toTitleCase(data.namaAyah) : undefined,
+    namaAyah: formattedAyah,
     pekerjaan: data.pekerjaan ? toTitleCase(data.pekerjaan) : undefined,
     agama: data.agama ? toTitleCase(data.agama) : undefined,
     statusPerkawinan: data.statusPerkawinan ? toTitleCase(data.statusPerkawinan) : undefined,

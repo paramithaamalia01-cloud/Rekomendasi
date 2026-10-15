@@ -13,6 +13,9 @@ import {
   deleteLetterFromFirestore,
 } from './services/letterService';
 
+import { getTodayIndonesianDate } from './utils/letterFormatter';
+import { generateNextSequentialNumbers } from './utils/letterNumbering';
+
 const STORAGE_KEY = 'alzam_mandiri_wisata_archive_v1';
 
 export const DEFAULT_APPLICANT: ApplicantData = {
@@ -29,18 +32,18 @@ export const DEFAULT_APPLICANT: ApplicantData = {
   nomorKk: '3604070000000000',
   namaKepalaKeluarga: 'Euis Cholishoh',
   namaAyah: 'H. Ahmad Subandi',
-  nomorPasporLama: '',
-  dateOfExpiry: '',
-  expiredDatePaspor: '',
+  nomorPasporLama: 'Y0195142',
+  dateOfExpiry: '11/3/2027',
+  expiredDatePaspor: '11/3/2027',
   nomorWhatsapp: '081298765432',
   negaraTujuan: 'Arab Saudi',
   estimasiKeberangkatan: '16 - 24 November 2026',
   jadwalKeberangkatanDanKepulangan: '16 - 24 November 2026',
   keperluan: 'Permohonan Pembuatan Paspor Umrah',
-  nomorSurat: '7379/SR/AMW/X/2026',
-  nomorSuratPernyataan: '7380/SR/AMW/X/2026',
+  nomorSurat: '7431/SR/AMW/X/2026',
+  nomorSuratPernyataan: '7432/SR/AMW/X/2026',
   perihal: 'Permohonan Pembuatan Paspor',
-  tanggalSurat: '5 Oktober 2026',
+  tanggalSurat: getTodayIndonesianDate(),
   kotaPenerbitan: 'Jakarta',
   pejabatNama: 'Khairul Umam, ST, BA, MBA',
   pejabatJabatan: 'Direktur Utama',
@@ -175,13 +178,37 @@ export default function App() {
     triggerToast(`Data ${data.namaLengkap} berhasil dimuat langsung ke Surat Resmi!`);
   };
 
-  // Switch between templates (Permohonan vs Pernyataan & Jaminan vs Rekomendasi)
+  // Auto-update letter numbering and letter date
+  const handleRefreshNumberAndDate = () => {
+    const todayStr = getTodayIndonesianDate();
+    const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers(archive);
+    setApplicantData((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        nomorSurat: n1,
+        nomorSuratPernyataan: n2,
+        tanggalSurat: todayStr,
+      };
+    });
+    triggerToast(`Nomor surat (${n1}) & tanggal surat (${todayStr}) berhasil diperbarui otomatis!`);
+  };
+
+  // Switch between templates (Permohonan vs Pernyataan & Jaminan vs Rekomendasi vs Penambahan Nama vs Perpanjangan Paspor)
   const handleUpdateTemplateType = (newTemplate: LetterTemplateType) => {
     if (!applicantData) return;
 
-    if (newTemplate === 'permohonan_paspor') {
-      setApplicantData((prev) => {
-        if (!prev) return null;
+    const todayStr = getTodayIndonesianDate();
+    const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers(archive);
+
+    setApplicantData((prev) => {
+      if (!prev) return null;
+
+      const updatedTanggalSurat = todayStr;
+      const updatedNomorSurat = n1;
+      const updatedNomorSuratPernyataan = n2;
+
+      if (newTemplate === 'permohonan_paspor') {
         return {
           ...prev,
           templateType: 'permohonan_paspor',
@@ -192,22 +219,20 @@ export default function App() {
           teleponPerusahaan: '0815-9888-154',
           emailPerusahaan: 'alzam@bisa.id',
           websitePerusahaan: 'www.umrahbisa.com',
-          pejabatNama: 'Khairul Umam, S.T, B.A, MBA',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
           pejabatJabatan: 'Direktur Utama',
           perihal: 'Permohonan Pembuatan Paspor',
-          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Kepala Kantor Imigrasi Kelas II TPI Tanjung Pandan',
-          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Jl. Jendral Sudirman Km. 6,5, Desa Perawas, Kec. Tanjung Pandan, Kabupaten Belitung, Kepulauan Bangka Belitung 33413.',
+          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Kepala Kantor Imigrasi Kelas II Cilegon',
+          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Jl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434',
           tanggalIzinPpiu: '02 Agustus 2022',
-          nomorSurat: '7378/SR/AMW/X/2026',
-          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '12 - 23 Januari 2026',
-          tanggalSurat: '5 Oktober 2026',
+          nomorSurat: updatedNomorSurat,
+          nomorSuratPernyataan: updatedNomorSuratPernyataan,
+          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '16 - 24 November 2026',
+          tanggalSurat: updatedTanggalSurat,
           kotaPenerbitan: 'Jakarta',
         };
-      });
-      triggerToast('Format beralih ke: Surat Permohonan Pembuatan Paspor (PT. Alzam Mandiri Wisata)');
-    } else if (newTemplate === 'pernyataan_jaminan') {
-      setApplicantData((prev) => {
-        if (!prev) return null;
+      }
+      if (newTemplate === 'pernyataan_jaminan') {
         return {
           ...prev,
           templateType: 'pernyataan_jaminan',
@@ -218,75 +243,70 @@ export default function App() {
           teleponPerusahaan: '0815-9888-154',
           emailPerusahaan: 'alzam@bisa.id',
           websitePerusahaan: 'www.umrahbisa.com',
-          pejabatNama: 'Khairul Umam, S.T, B.A, MBA',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
           pejabatJabatan: 'Direktur Utama',
           perihal: 'Surat Pernyataan dan Jaminan',
-          nomorSurat: '7377/SR/AMW/X/2026',
-          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '12 - 23 Januari 2026',
-          tanggalSurat: '5 Oktober 2026',
+          nomorSurat: updatedNomorSurat,
+          nomorSuratPernyataan: updatedNomorSuratPernyataan,
+          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '16 - 24 November 2026',
+          tanggalSurat: updatedTanggalSurat,
           kotaPenerbitan: 'Jakarta',
         };
-      });
-      triggerToast('Format beralih ke: Surat Pernyataan dan Jaminan (PT. Alzam Mandiri Wisata)');
-    } else if (newTemplate === 'penambahan_nama') {
-      setApplicantData((prev) => {
-        if (!prev) return null;
+      }
+      if (newTemplate === 'penambahan_nama') {
         return {
           ...prev,
           templateType: 'penambahan_nama',
           namaPerusahaan: 'PT. Alzam Mandiri Wisata',
           taglinePerusahaan: 'Tour & Travel',
-          izinPpiu: '29042200007580001',
+          izinPpiu: '29042200007580004',
           alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
           teleponPerusahaan: '0815-9888-154',
           emailPerusahaan: 'alzam@bisa.id',
           websitePerusahaan: 'www.umrahbisa.com',
-          pejabatNama: 'Khairul Umam, S.T, B.A, MBA',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
           pejabatJabatan: 'Direktur Utama',
           perihal: 'Permohonan Penambahan Nama Paspor',
-          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Mal Pelayanan Publik Kota Cimahi Jl. Aruman',
-          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Kelurahan Pasirkaliki, Kecamatan Cimahi Utara, Kota Cimahi, Jawa Barat 40514',
+          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Kepala Kantor Imigrasi Kelas II Cilegon',
+          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Jl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434',
           tanggalIzinPpiu: '02 Agustus 2022',
-          nomorSurat: '7368/SR/AMW/X/2026',
+          nomorSurat: updatedNomorSurat,
+          nomorSuratPernyataan: updatedNomorSuratPernyataan,
           namaMenjadi: prev.namaMenjadi || (prev.namaAyah ? `${prev.namaLengkap} ${prev.namaAyah}` : `${prev.namaLengkap} Emu`),
           nomorPasporLama: prev.nomorPasporLama || 'Y0195142',
-          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '5 - 14 November 2026',
-          tanggalSurat: '4 Oktober 2026',
+          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '16 - 24 November 2026',
+          tanggalSurat: updatedTanggalSurat,
           kotaPenerbitan: 'Jakarta',
         };
-      });
-      triggerToast('Format beralih ke: Surat Permohonan Penambahan Nama Paspor');
-    } else if (newTemplate === 'perpanjangan_paspor') {
-      setApplicantData((prev) => {
-        if (!prev) return null;
+      }
+      if (newTemplate === 'perpanjangan_paspor') {
         return {
           ...prev,
           templateType: 'perpanjangan_paspor',
           namaPerusahaan: 'PT. Alzam Mandiri Wisata',
           taglinePerusahaan: 'Tour & Travel',
-          izinPpiu: '29042200007580001',
+          izinPpiu: '29042200007580004',
           alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
           teleponPerusahaan: '0815-9888-154',
           emailPerusahaan: 'alzam@bisa.id',
           websitePerusahaan: 'www.umrahbisa.com',
-          pejabatNama: 'Khairul Umam, S.T, B.A, MBA',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
           pejabatJabatan: 'Direktur Utama',
           perihal: 'Permohonan Perpanjangan Paspor',
-          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Mal Pelayanan Publik Kota Cimahi Jl. Aruman',
-          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Kelurahan Pasirkaliki, Kecamatan Cimahi Utara, Kota Cimahi, Jawa Barat 40514',
+          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Kepala Kantor Imigrasi Kelas II Cilegon',
+          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Jl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434',
           tanggalIzinPpiu: '02 Agustus 2022',
-          nomorSurat: '7368/SR/AMW/X/2026',
-          nomorPasporLama: prev.nomorPasporLama || 'C8527774',
+          nomorSurat: updatedNomorSurat,
+          nomorSuratPernyataan: updatedNomorSuratPernyataan,
+          nomorPasporLama: prev.nomorPasporLama || 'Y0195142',
           dateOfExpiry: prev.dateOfExpiry || prev.expiredDatePaspor || '11/3/2027',
-          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '5 - 14 November 2026',
-          tanggalSurat: '4 Oktober 2026',
+          expiredDatePaspor: prev.dateOfExpiry || prev.expiredDatePaspor || '11/3/2027',
+          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '16 - 24 November 2026',
+          tanggalSurat: updatedTanggalSurat,
           kotaPenerbitan: 'Jakarta',
         };
-      });
-      triggerToast('Format beralih ke: Surat Permohonan Perpanjangan Paspor');
-    } else if (newTemplate === 'paket_lengkap_alzam') {
-      setApplicantData((prev) => {
-        if (!prev) return null;
+      }
+      if (newTemplate === 'paket_lengkap_alzam') {
         return {
           ...prev,
           templateType: 'paket_lengkap_alzam',
@@ -297,39 +317,29 @@ export default function App() {
           teleponPerusahaan: '0815-9888-154',
           emailPerusahaan: 'alzam@bisa.id',
           websitePerusahaan: 'www.umrahbisa.com',
-          pejabatNama: 'Khairul Umam, S.T, B.A, MBA',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
           pejabatJabatan: 'Direktur Utama',
           perihal: 'Permohonan Pembuatan Paspor',
-          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Kepala Kantor Imigrasi Kelas II TPI Tanjung Pandan',
-          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Jl. Jendral Sudirman Km. 6,5, Desa Perawas, Kec. Tanjung Pandan, Kabupaten Belitung, Kepulauan Bangka Belitung 33413.',
+          tujuanKantorImigrasi: prev.tujuanKantorImigrasi || 'Kepala Kantor Imigrasi Kelas II Cilegon',
+          alamatKantorImigrasi: prev.alamatKantorImigrasi || 'Jl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434',
           tanggalIzinPpiu: '02 Agustus 2022',
-          nomorSurat: '7378/SR/AMW/X/2026',
-          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '12 - 23 Januari 2026',
-          tanggalSurat: '5 Oktober 2026',
+          nomorSurat: updatedNomorSurat,
+          nomorSuratPernyataan: updatedNomorSuratPernyataan,
+          jadwalKeberangkatanDanKepulangan: prev.jadwalKeberangkatanDanKepulangan || '16 - 24 November 2026',
+          tanggalSurat: updatedTanggalSurat,
           kotaPenerbitan: 'Jakarta',
         };
-      });
-      triggerToast('Format beralih ke: Paket Lengkap 2 Surat Sekaligus (Permohonan + Jaminan)');
-    } else {
-      setApplicantData((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          templateType: 'permohonan_paspor',
-          namaPerusahaan: 'PT. Alzam Mandiri Wisata',
-          izinPpiu: '29042200007580004',
-          alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
-          teleponPerusahaan: '0815-9888-154',
-          emailPerusahaan: 'alzam@bisa.id',
-          websitePerusahaan: 'www.umrahbisa.com',
-          pejabatNama: 'Khairul Umam, S.T, B.A, MBA',
-          pejabatJabatan: 'Direktur Utama',
-          perihal: 'Permohonan Pembuatan Paspor',
-          tanggalSurat: '5 Oktober 2026',
-          kotaPenerbitan: 'Jakarta',
-        };
-      });
-    }
+      }
+      return {
+        ...prev,
+        templateType: newTemplate,
+        nomorSurat: updatedNomorSurat,
+        nomorSuratPernyataan: updatedNomorSuratPernyataan,
+        tanggalSurat: updatedTanggalSurat,
+      };
+    });
+
+    triggerToast(`Format beralih! Nomor (${n1}) & tanggal surat (${todayStr}) diperbarui otomatis.`);
   };
 
   // Save current letter to archive (Firestore if logged in, local state always)
@@ -495,6 +505,7 @@ export default function App() {
             files={files}
             onProceedToLetter={() => setActiveTab('preview')}
             onBackToUpload={() => setActiveTab('upload')}
+            onRefreshNumberAndDate={handleRefreshNumberAndDate}
           />
         )}
 
@@ -506,6 +517,7 @@ export default function App() {
             isSavedInArchive={isCurrentSaved}
             onUpdateTemplateType={handleUpdateTemplateType}
             onUpdateApplicantData={setApplicantData}
+            onRefreshNumberAndDate={handleRefreshNumberAndDate}
           />
         )}
 

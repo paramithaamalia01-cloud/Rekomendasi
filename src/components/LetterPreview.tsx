@@ -20,8 +20,8 @@ import {
   Share2,
 } from 'lucide-react';
 import { ApplicantData, LetterTemplateType } from '../types';
-import { generateOfficialLetterPdf } from '../utils/pdfGenerator';
-import { toTitleCase, createWhatsAppNotificationUrl } from '../utils/letterFormatter';
+import { generateOfficialLetterPdf, printOfficialDocument } from '../utils/pdfGenerator';
+import { toTitleCase, createWhatsAppNotificationUrl, getTodayIndonesianDate, parsePlaceAndBirthDate, cleanApplicantName } from '../utils/letterFormatter';
 import { ImmigrationOfficePicker } from './ImmigrationOfficePicker';
 import { extractSequenceNumber, updateSequenceNumber } from '../utils/letterNumbering';
 import {
@@ -38,6 +38,7 @@ interface LetterPreviewProps {
   isSavedInArchive?: boolean;
   onUpdateTemplateType?: (template: LetterTemplateType) => void;
   onUpdateApplicantData?: (newData: ApplicantData) => void;
+  onRefreshNumberAndDate?: () => void;
 }
 
 export const LetterPreview: React.FC<LetterPreviewProps> = ({
@@ -47,14 +48,19 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
   isSavedInArchive = false,
   onUpdateTemplateType,
   onUpdateApplicantData,
+  onRefreshNumberAndDate,
 }) => {
   const currentTemplate = data.templateType || 'permohonan_paspor';
   const [withStamp, setWithStamp] = useState<boolean>(true);
   const [withSignature, setWithSignature] = useState<boolean>(true);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
-  const [pdfSuccess, setPdfSuccess] = useState<boolean>(false);
+  const [paperSize, setPaperSize] = useState<'a4' | 'f4'>('a4');
+  const [isGeneratingPdfSize, setIsGeneratingPdfSize] = useState<'a4' | 'f4' | null>(null);
+  const [pdfSuccessSize, setPdfSuccessSize] = useState<'a4' | 'f4' | null>(null);
+  const [isPrinting, setIsPrinting] = useState<boolean>(false);
   const [localSaveSuccess, setLocalSaveSuccess] = useState<boolean>(false);
   const [saveToast, setSaveToast] = useState<string | null>(null);
+
+  const isGeneratingPdf = isGeneratingPdfSize !== null;
 
   // Mode Edit Langsung di Layar
   const [isInlineEditMode, setIsInlineEditMode] = useState<boolean>(false);
@@ -101,10 +107,20 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
   const updateField = (field: keyof ApplicantData, value: string) => {
     if (onUpdateApplicantData) {
       const updated = { ...data, [field]: value };
-      if (field === 'tempatLahir' || field === 'tanggalLahir') {
+      if (field === 'tempatTanggalLahir') {
+        const parsed = parsePlaceAndBirthDate('', '', value, data.nik);
+        updated.tempatLahir = parsed.tempatLahir;
+        updated.tanggalLahir = parsed.tanggalLahir;
+        updated.tempatTanggalLahir = value;
+      } else if (field === 'tempatLahir' || field === 'tanggalLahir') {
         const tLahir = field === 'tempatLahir' ? value : (data.tempatLahir || '');
         const tgLahir = field === 'tanggalLahir' ? value : (data.tanggalLahir || '');
-        updated.tempatTanggalLahir = `${tLahir}, ${tgLahir}`.trim().replace(/^,\s*/, '').replace(/,\s*$/, '');
+        const parsed = parsePlaceAndBirthDate(tLahir, tgLahir, undefined, data.nik);
+        updated.tempatLahir = parsed.tempatLahir;
+        updated.tanggalLahir = parsed.tanggalLahir;
+        updated.tempatTanggalLahir = parsed.tempatTanggalLahir;
+      } else if (field === 'namaLengkap') {
+        updated.namaLengkap = cleanApplicantName(value);
       }
       onUpdateApplicantData(updated);
     }
@@ -161,34 +177,59 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
     showNotification('✓ Berhasil! Data surat resmi telah diperbarui.');
   };
 
-  const handleDownloadPdf = async () => {
-    setIsGeneratingPdf(true);
+  const handleDownloadPdf = async (size: 'a4' | 'f4' = paperSize) => {
+    setIsGeneratingPdfSize(size);
     try {
       if (onSaveToArchive) {
         onSaveToArchive({ withMaterai: false, withStamp, withSignature });
       }
 
-      await generateOfficialLetterPdf('official-letter-to-print', data);
-      setPdfSuccess(true);
-      setTimeout(() => setPdfSuccess(false), 3000);
+      await generateOfficialLetterPdf('official-letter-to-print', data, { paperSize: size });
+      setPdfSuccessSize(size);
+      showNotification(`✓ File PDF (${size.toUpperCase()}${size === 'f4' ? ' Folio' : ''}) berhasil dibuat dan diunduh!`);
+      setTimeout(() => setPdfSuccessSize(null), 3000);
     } catch (err) {
-      console.error('PDF generation error, falling back to window.print():', err);
-      try {
-        window.print();
-      } catch (printErr) {
-        console.error('Print also failed:', printErr);
-      }
+      console.error('PDF generation error:', err);
+      showNotification(`Gagal membuat PDF: ${err instanceof Error ? err.message : 'Terjadi kesalahan'}`);
     } finally {
-      setIsGeneratingPdf(false);
+      setIsGeneratingPdfSize(null);
     }
   };
 
-  const handlePrint = () => {
+  const handlePrint = async (size: 'a4' | 'f4' = paperSize) => {
+    setIsPrinting(true);
     try {
-      window.print();
+      if (onSaveToArchive) {
+        onSaveToArchive({ withMaterai: false, withStamp, withSignature });
+      }
+
+      showNotification(`Menyiapkan lembar cetak dokumen (${size.toUpperCase()})...`);
+
+      const cleanDocNumber = (data.nomorSurat || 'Surat').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanDocName = (data.namaLengkap || 'Pemohon').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      const printResult = await printOfficialDocument('official-letter-to-print', {
+        paperSize: size,
+        title: `${cleanDocNumber}_${cleanDocName}_${size.toUpperCase()}`,
+      });
+
+      if (!printResult.success) {
+        // Fallback for sandboxed iframe environments or browsers blocking window.print()
+        showNotification(
+          `ℹ️ Peramban membatasi dialog cetak di dalam pratinjau. Mengunduh file PDF resmi (${size.toUpperCase()}) resolusi tinggi siap cetak...`
+        );
+        await generateOfficialLetterPdf('official-letter-to-print', data, { paperSize: size });
+      } else {
+        showNotification(`✓ Jendela cetak telah dibuka (Ukuran: ${size.toUpperCase()})`);
+      }
     } catch (e) {
       console.warn('Direct print blocked by browser/iframe, downloading PDF file:', e);
-      handleDownloadPdf();
+      showNotification(
+        `ℹ️ Mengunduh file PDF resmi (${size.toUpperCase()}) resolusi tinggi untuk dicetak...`
+      );
+      await generateOfficialLetterPdf('official-letter-to-print', data, { paperSize: size });
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -331,7 +372,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                 type="text"
                 id={`${docPrefix}-tanggalSurat`}
                 data-field={`${docPrefix}-tanggalSurat`}
-                value={data.tanggalSurat || '5 Oktober 2026'}
+                value={data.tanggalSurat || getTodayIndonesianDate()}
                 onChange={(e) => updateField('tanggalSurat', e.target.value)}
                 className="doc-inline-input flex-1 text-[11pt]"
                 placeholder="Tanggal Surat"
@@ -343,7 +384,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
               className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
               title="Klik untuk mengedit tanggal surat"
             >
-              {data.kotaPenerbitan || 'Jakarta'}, {data.tanggalSurat}
+              {data.kotaPenerbitan || 'Jakarta'}, {data.tanggalSurat || getTodayIndonesianDate()}
             </span>
           )}
         </p>
@@ -569,6 +610,19 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
               <SlidersHorizontal className="w-3.5 h-3.5 text-[#E68F65]" />
               <span>Ubah Data Cepat</span>
             </button>
+
+            {/* Tombol Auto Update Nomor Surat & Tanggal */}
+            {onRefreshNumberAndDate && (
+              <button
+                type="button"
+                onClick={onRefreshNumberAndDate}
+                className="px-3.5 py-2 bg-[#1B3024] hover:bg-[#2F4E3C] text-emerald-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-emerald-600/50 flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                title="Perbarui nomor surat ke urutan berikutnya dan tanggal surat ke hari ini secara otomatis"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Update No &amp; Tgl Otomatis</span>
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -594,27 +648,102 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
               )}
             </button>
 
-            {/* Tombol Simpan / Unduh PDF */}
+            {/* Pilihan Ukuran Kertas Resmi */}
+            <div className="flex items-center gap-1 bg-[#1B3024] p-1 rounded-xl border border-[#3D604C]">
+              <span className="text-[11px] font-semibold text-[#A2C2AE] px-2 hidden sm:inline">
+                Kertas:
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaperSize('a4');
+                  showNotification('Pratinjau diset ke ukuran Kertas A4 (210 × 297 mm)');
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  paperSize === 'a4'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-[#C5D8CC] hover:text-white hover:bg-[#2F4E3C]'
+                }`}
+                title="Format kertas A4 (210 x 297 mm) standar internasional"
+              >
+                A4 (210×297)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaperSize('f4');
+                  showNotification('Pratinjau diset ke ukuran Kertas F4 / Folio (215 × 330 mm) - Standar Imigrasi');
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  paperSize === 'f4'
+                    ? 'bg-[#D96B38] text-white shadow-xs'
+                    : 'text-[#C5D8CC] hover:text-white hover:bg-[#2F4E3C]'
+                }`}
+                title="Format kertas F4 / Folio (215 x 330 mm) standar resmi berkas Kantor Imigrasi"
+              >
+                <span>F4 / Folio</span>
+                <span className="text-[9px] px-1 py-0.2 bg-amber-950/80 text-amber-200 rounded font-bold border border-amber-500/40">
+                  Imigrasi
+                </span>
+              </button>
+            </div>
+
+            {/* Tombol Unduh PDF A4 */}
             <button
               type="button"
-              onClick={handleDownloadPdf}
-              disabled={isGeneratingPdf}
-              className="px-4 py-2 bg-[#D96B38] hover:bg-[#C25B2A] disabled:bg-[#7D4020] text-white font-extrabold rounded-xl text-xs transition-all shadow-md flex items-center gap-2 cursor-pointer active:scale-95"
+              onClick={() => handleDownloadPdf('a4')}
+              disabled={isGeneratingPdfSize !== null}
+              className={`px-3.5 py-2 text-white font-extrabold rounded-xl text-xs transition-all shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                paperSize === 'a4'
+                  ? 'bg-emerald-700 hover:bg-emerald-800 border border-emerald-500 ring-2 ring-emerald-400/40'
+                  : 'bg-[#1B3024] hover:bg-[#2F4E3C] border border-[#3D604C] text-[#FAF7F2]'
+              } disabled:opacity-50`}
+              title="Unduh surat resmi dalam format PDF Kertas A4 (210 x 297 mm)"
             >
-              {isGeneratingPdf ? (
+              {isGeneratingPdfSize === 'a4' ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Membuat PDF A4...</span>
+                  <span>Proses A4...</span>
                 </>
-              ) : pdfSuccess ? (
+              ) : pdfSuccessSize === 'a4' ? (
                 <>
-                  <Check className="w-4 h-4 text-[#E4ECE6]" />
-                  <span className="text-[#FAF7F2]">PDF Tersimpan!</span>
+                  <Check className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>A4 Siap!</span>
                 </>
               ) : (
                 <>
-                  <Download className="w-4 h-4" />
+                  <Download className="w-3.5 h-3.5" />
                   <span>Unduh PDF (A4)</span>
+                </>
+              )}
+            </button>
+
+            {/* Tombol Unduh PDF Kertas F4 / Folio (Standar Imigrasi) */}
+            <button
+              type="button"
+              onClick={() => handleDownloadPdf('f4')}
+              disabled={isGeneratingPdfSize !== null}
+              className={`px-3.5 py-2 text-white font-extrabold rounded-xl text-xs transition-all shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                paperSize === 'f4'
+                  ? 'bg-[#D96B38] hover:bg-[#C25B2A] border border-[#FFA07A] ring-2 ring-[#D96B38]/40'
+                  : 'bg-[#D96B38] hover:bg-[#C25B2A] border border-[#B8572A]'
+              } disabled:opacity-50`}
+              title="Unduh surat resmi dalam format PDF Kertas F4 / Folio (215 x 330 mm) - Standar Berkas Kantor Imigrasi"
+            >
+              {isGeneratingPdfSize === 'f4' ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Proses F4...</span>
+                </>
+              ) : pdfSuccessSize === 'f4' ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-amber-200" />
+                  <span>F4 Siap!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh PDF (F4)</span>
                 </>
               )}
             </button>
@@ -622,11 +751,22 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
             {/* Tombol Cetak / Print */}
             <button
               type="button"
-              onClick={handlePrint}
-              className="px-3.5 py-2 bg-[#1B3024] hover:bg-[#2F4E3C] text-[#FAF7F2] rounded-xl text-xs font-semibold transition-all border border-[#3D604C] flex items-center gap-1.5 cursor-pointer"
+              onClick={() => handlePrint(paperSize)}
+              disabled={isPrinting}
+              className="px-3.5 py-2 bg-[#1B3024] hover:bg-[#2F4E3C] active:scale-95 text-[#FAF7F2] rounded-xl text-xs font-semibold transition-all border border-[#3D604C] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title={`Cetak dokumen langsung menggunakan ukuran kertas ${paperSize.toUpperCase()}`}
             >
-              <Printer className="w-3.5 h-3.5 text-[#C5D8CC]" />
-              <span className="hidden sm:inline">Cetak</span>
+              {isPrinting ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-[#FAF7F2] border-t-transparent rounded-full animate-spin" />
+                  <span>Mencetak...</span>
+                </>
+              ) : (
+                <>
+                  <Printer className="w-3.5 h-3.5 text-[#C5D8CC]" />
+                  <span>Cetak ({paperSize.toUpperCase()})</span>
+                </>
+              )}
             </button>
 
             {/* Tombol Kirim WhatsApp Jamaah */}
@@ -1230,6 +1370,28 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
         </div>
       )}
 
+      {/* Paper size information tag above document */}
+      <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 px-1 py-1 print:hidden">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-slate-700">Ukuran Kertas Pratinjau:</span>
+          <span className={`px-2.5 py-1 rounded-md text-xs font-bold border shadow-xs flex items-center gap-1.5 ${
+            paperSize === 'f4'
+              ? 'bg-amber-50 border-amber-300 text-amber-900'
+              : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+          }`}>
+            <span>{paperSize === 'f4' ? 'F4 / Folio (215 mm × 330 mm)' : 'A4 (210 mm × 297 mm)'}</span>
+            {paperSize === 'f4' && (
+              <span className="text-[10px] px-1.5 py-0.2 bg-amber-700 text-white rounded font-extrabold">
+                Standar Kantor Imigrasi RI
+              </span>
+            )}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-500 hidden sm:block">
+          Margin Format Resmi: Atas 2.0 cm, Bawah 2.0 cm, Kiri 2.5 cm, Kanan 2.5 cm
+        </div>
+      </div>
+
       {/* Official Letter Printable Container for html2pdf and print */}
       <div className="overflow-x-auto w-full pb-4">
         <div id="official-letter-to-print" className="space-y-8 print:space-y-0 min-w-[320px]">
@@ -1238,7 +1400,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
           {/* ========================================================================= */}
           {(currentTemplate === 'permohonan_paspor' || currentTemplate === 'paket_lengkap_alzam' || currentTemplate === 'rekomendasi') && (
             <div
-              className="official-letter-page bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none"
+              className={`official-letter-page page-${paperSize} bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none`}
               style={{
                 fontFamily: '"Times New Roman", Times, "Liberation Serif", serif',
                 lineHeight: '1.5',
@@ -1594,7 +1756,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
           {/* ========================================================================= */}
           {(currentTemplate === 'pernyataan_jaminan' || currentTemplate === 'paket_lengkap_alzam') && (
             <div
-              className="official-letter-page bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none"
+              className={`official-letter-page page-${paperSize} bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none`}
               style={{
                 fontFamily: '"Times New Roman", Times, "Liberation Serif", serif',
                 lineHeight: '1.5',
@@ -1615,7 +1777,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             type="text"
                             id="doc2-nomorSuratPernyataan"
                             data-field="nomorSuratPernyataan"
-                            value={data.nomorSuratPernyataan || (currentTemplate === 'paket_lengkap_alzam' ? '7380/SR/AMW/X/2026' : data.nomorSurat)}
+                            value={data.nomorSuratPernyataan || data.nomorSurat}
                             onChange={(e) => updateField('nomorSuratPernyataan', e.target.value)}
                             className="doc-inline-input font-mono"
                             placeholder="Nomor Surat Jaminan"
@@ -1626,7 +1788,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1 font-mono"
                             title="Klik untuk mengedit nomor surat"
                           >
-                            {data.nomorSuratPernyataan || (currentTemplate === 'paket_lengkap_alzam' ? '7380/SR/AMW/X/2026' : data.nomorSurat)}
+                            {data.nomorSuratPernyataan || data.nomorSurat}
                           </span>
                         )}
                       </td>
@@ -1854,6 +2016,15 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                         </td>
                       </tr>
                     )}
+                    {(data.dateOfExpiry || data.expiredDatePaspor) && (
+                      <tr>
+                        <td className="align-top py-0.5">Masa Berlaku Paspor</td>
+                        <td className="align-top py-0.5">:</td>
+                        <td className="py-0.5 font-medium">
+                          {data.dateOfExpiry || data.expiredDatePaspor}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1936,7 +2107,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
           {/* ========================================================================= */}
           {currentTemplate === 'penambahan_nama' && (
             <div
-              className="official-letter-page bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none"
+              className={`official-letter-page page-${paperSize} bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none`}
               style={{
                 fontFamily: '"Times New Roman", Times, "Liberation Serif", serif',
                 lineHeight: '1.5',
@@ -1957,7 +2128,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             type="text"
                             id="doc3-nomorSurat"
                             data-field="nomorSurat"
-                            value={data.nomorSurat ?? '7368/SR/AMW/X/2026'}
+                            value={data.nomorSurat || ''}
                             onChange={(e) => updateField('nomorSurat', e.target.value)}
                             className="doc-inline-input font-mono"
                             placeholder="Nomor Surat"
@@ -1967,7 +2138,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             onClick={() => activateInlineEdit('doc3-nomorSurat')}
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
                           >
-                            {data.nomorSurat || '7368/SR/AMW/X/2026'}
+                            {data.nomorSurat}
                           </span>
                         )}
                       </td>
@@ -2062,7 +2233,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             onClick={() => activateInlineEdit('doc3-namaLengkap')}
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
                           >
-                            {toTitleCase(data.namaLengkap || 'Suratman')}
+                            {toTitleCase(data.namaLengkap)}
                           </span>
                         )}
                       </td>
@@ -2085,7 +2256,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             onClick={() => activateInlineEdit('doc3-tempatTanggalLahir')}
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
                           >
-                            {toTitleCase(data.tempatTanggalLahir || 'Cimahi, 10 November 1973')}
+                            {toTitleCase(data.tempatTanggalLahir)}
                           </span>
                         )}
                       </td>
@@ -2099,10 +2270,10 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             type="text"
                             id="doc3-namaMenjadi"
                             data-field="namaMenjadi"
-                            value={data.namaMenjadi || `${data.namaLengkap} ${data.namaAyah || 'Emu'}`.trim()}
+                            value={data.namaMenjadi || (data.namaAyah ? `${data.namaLengkap} ${data.namaAyah}` : data.namaLengkap)}
                             onChange={(e) => updateField('namaMenjadi', e.target.value)}
                             className="doc-inline-input font-bold"
-                            placeholder="Contoh: Suratman Emu"
+                            placeholder="Contoh: Nama Pemohon + Nama Ayah"
                           />
                         ) : (
                           <span
@@ -2110,7 +2281,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1 font-bold"
                             title="Klik untuk mengedit nama menjadi"
                           >
-                            {toTitleCase(data.namaMenjadi || `${data.namaLengkap} ${data.namaAyah || 'Emu'}`.trim())}
+                            {toTitleCase(data.namaMenjadi || (data.namaAyah ? `${data.namaLengkap} ${data.namaAyah}` : data.namaLengkap))}
                           </span>
                         )}
                       </td>
@@ -2215,7 +2386,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
           {/* ========================================================================= */}
           {currentTemplate === 'perpanjangan_paspor' && (
             <div
-              className="official-letter-page bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none"
+              className={`official-letter-page page-${paperSize} bg-white border border-slate-300 text-slate-900 mx-auto print:p-0 print:border-none print:shadow-none print:m-0 font-formal text-[11pt] leading-spasi-1-5 print:break-after-page shadow-sm rounded-lg sm:rounded-none`}
               style={{
                 fontFamily: '"Times New Roman", Times, "Liberation Serif", serif',
                 lineHeight: '1.5',
@@ -2236,7 +2407,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             type="text"
                             id="doc4-nomorSurat"
                             data-field="nomorSurat"
-                            value={data.nomorSurat ?? '7368/SR/AMW/X/2026'}
+                            value={data.nomorSurat || ''}
                             onChange={(e) => updateField('nomorSurat', e.target.value)}
                             className="doc-inline-input font-mono"
                             placeholder="Nomor Surat"
@@ -2246,7 +2417,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             onClick={() => activateInlineEdit('doc4-nomorSurat')}
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
                           >
-                            {data.nomorSurat || '7368/SR/AMW/X/2026'}
+                            {data.nomorSurat}
                           </span>
                         )}
                       </td>
@@ -2341,7 +2512,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             onClick={() => activateInlineEdit('doc4-namaLengkap')}
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
                           >
-                            {toTitleCase(data.namaLengkap || 'Safudin Dasman')}
+                            {toTitleCase(data.namaLengkap)}
                           </span>
                         )}
                       </td>
@@ -2364,7 +2535,7 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             onClick={() => activateInlineEdit('doc4-tempatTanggalLahir')}
                             className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
                           >
-                            {toTitleCase(data.tempatTanggalLahir || 'Cimahi, 10 November 1973')}
+                            {toTitleCase(data.tempatTanggalLahir)}
                           </span>
                         )}
                       </td>
@@ -2378,17 +2549,17 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             type="text"
                             id="doc4-nomorPasporLama"
                             data-field="nomorPasporLama"
-                            value={data.nomorPasporLama || 'C8527774'}
+                            value={data.nomorPasporLama || ''}
                             onChange={(e) => updateField('nomorPasporLama', e.target.value)}
                             className="doc-inline-input font-mono"
-                            placeholder="Contoh: C8527774"
+                            placeholder="Contoh: Y0195142 / C8527774"
                           />
                         ) : (
                           <span
                             onClick={() => activateInlineEdit('doc4-nomorPasporLama')}
-                            className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1 font-mono"
+                            className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1 font-mono font-bold"
                           >
-                            {data.nomorPasporLama || 'C8527774'}
+                            {data.nomorPasporLama || '-'}
                           </span>
                         )}
                       </td>
@@ -2402,20 +2573,20 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
                             type="text"
                             id="doc4-dateOfExpiry"
                             data-field="dateOfExpiry"
-                            value={data.dateOfExpiry || data.expiredDatePaspor || '11/3/2027'}
+                            value={data.dateOfExpiry || data.expiredDatePaspor || ''}
                             onChange={(e) => {
                               updateField('dateOfExpiry', e.target.value);
                               updateField('expiredDatePaspor', e.target.value);
                             }}
                             className="doc-inline-input"
-                            placeholder="Contoh: 11/3/2027"
+                            placeholder="Contoh: 11/3/2027 atau 15 Mei 2027"
                           />
                         ) : (
                           <span
                             onClick={() => activateInlineEdit('doc4-dateOfExpiry')}
-                            className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1"
+                            className="cursor-pointer hover:bg-emerald-50 rounded px-1 -mx-1 font-medium"
                           >
-                            {data.dateOfExpiry || data.expiredDatePaspor || '11/3/2027'}
+                            {data.dateOfExpiry || data.expiredDatePaspor || '-'}
                           </span>
                         )}
                       </td>
@@ -2519,16 +2690,33 @@ export const LetterPreview: React.FC<LetterPreviewProps> = ({
 
         <button
           type="button"
-          onClick={handleDownloadPdf}
+          onClick={() => handlePrint(paperSize)}
+          disabled={isPrinting}
+          className="flex-1 py-2.5 bg-[#1B3024] active:bg-[#2F4E3C] text-white rounded-xl text-xs font-bold border border-[#3D604C] flex items-center justify-center gap-1 shadow-sm disabled:opacity-50"
+          title="Cetak Surat"
+        >
+          {isPrinting ? (
+            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Printer className="w-3.5 h-3.5 text-[#C5D8CC]" />
+          )}
+          <span>Cetak</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleDownloadPdf(paperSize)}
           disabled={isGeneratingPdf}
-          className="flex-1 py-2.5 bg-[#D96B38] active:bg-[#C25B2A] text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1"
+          className={`flex-1 py-2.5 text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50 ${
+            paperSize === 'f4' ? 'bg-[#D96B38] active:bg-[#C25B2A]' : 'bg-emerald-700 active:bg-emerald-800'
+          }`}
         >
           {isGeneratingPdf ? (
             <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
           ) : (
             <Download className="w-3.5 h-3.5" />
           )}
-          <span>Unduh PDF</span>
+          <span>Unduh {paperSize.toUpperCase()}</span>
         </button>
       </div>
     </div>

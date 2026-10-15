@@ -23,7 +23,17 @@ import {
   FileText,
 } from 'lucide-react';
 import { ApplicantData, UploadedFiles, LetterTemplateType } from '../types';
-import { validateNik, validateNoKk, toTitleCase, formatApplicantData } from '../utils/letterFormatter';
+import {
+  validateNik,
+  validateNoKk,
+  toTitleCase,
+  formatApplicantData,
+  computeAutoNamaMenjadi,
+  getTodayIndonesianDate,
+  parsePlaceAndBirthDate,
+  cleanApplicantName,
+  extractBirthInfoFromNik,
+} from '../utils/letterFormatter';
 import { ImmigrationOfficePicker } from './ImmigrationOfficePicker';
 import {
   generateNextSequentialNumbers,
@@ -37,6 +47,7 @@ interface VerificationFormProps {
   files: UploadedFiles;
   onProceedToLetter: () => void;
   onBackToUpload: () => void;
+  onRefreshNumberAndDate?: () => void;
 }
 
 export const VerificationForm: React.FC<VerificationFormProps> = ({
@@ -45,6 +56,7 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
   files,
   onProceedToLetter,
   onBackToUpload,
+  onRefreshNumberAndDate,
 }) => {
   const [activePreview, setActivePreview] = useState<'ktp' | 'kk'>('ktp');
   const [showAdvancedCompany, setShowAdvancedCompany] = useState<boolean>(false);
@@ -66,11 +78,44 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
     }
     setData((prev) => {
       const updated = { ...prev, [field]: value };
-      if (field === 'tempatLahir' || field === 'tanggalLahir') {
+
+      if (field === 'tempatTanggalLahir') {
+        const parsed = parsePlaceAndBirthDate('', '', value, prev.nik);
+        updated.tempatLahir = parsed.tempatLahir;
+        updated.tanggalLahir = parsed.tanggalLahir;
+        updated.tempatTanggalLahir = value;
+      } else if (field === 'tempatLahir' || field === 'tanggalLahir') {
         const tLahir = field === 'tempatLahir' ? value : (prev.tempatLahir || '');
         const tgLahir = field === 'tanggalLahir' ? value : (prev.tanggalLahir || '');
-        updated.tempatTanggalLahir = `${tLahir}, ${tgLahir}`.trim().replace(/^,\s*/, '').replace(/,\s*$/, '');
+        const parsed = parsePlaceAndBirthDate(tLahir, tgLahir, undefined, prev.nik);
+        updated.tempatLahir = parsed.tempatLahir;
+        updated.tanggalLahir = parsed.tanggalLahir;
+        updated.tempatTanggalLahir = parsed.tempatTanggalLahir;
       }
+
+      if (field === 'nik') {
+        const cleanNik = value.replace(/\D/g, '');
+        if (cleanNik.length === 16) {
+          const info = extractBirthInfoFromNik(cleanNik);
+          if (info) {
+            if (!prev.tanggalLahir || prev.tanggalLahir.length < 5) {
+              updated.tanggalLahir = info.tanggalLahir;
+              updated.tempatTanggalLahir = prev.tempatLahir ? `${prev.tempatLahir}, ${info.tanggalLahir}` : info.tanggalLahir;
+            }
+            if (!prev.jenisKelamin) {
+              updated.jenisKelamin = info.jenisKelamin;
+            }
+          }
+        }
+      }
+
+      if (field === 'namaLengkap' || field === 'namaAyah') {
+        const nLengkap = field === 'namaLengkap' ? cleanApplicantName(value) : (prev.namaLengkap || '');
+        const nAyah = field === 'namaAyah' ? value : (prev.namaAyah || '');
+        // Keep namaLengkap true to KTP, compute namaMenjadi separately
+        updated.namaMenjadi = computeAutoNamaMenjadi(nLengkap, nAyah, prev.namaMenjadi);
+      }
+
       return updated;
     });
   };
@@ -79,10 +124,38 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
     setData((prev) => formatApplicantData(prev));
   };
 
-  const handleGenerateNextSequentialNumber = () => {
+  const handleTemplateSwitch = (newTemplate: LetterTemplateType) => {
+    const todayStr = getTodayIndonesianDate();
     const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers();
-    handleFieldChange('nomorSurat', n1);
-    handleFieldChange('nomorSuratPernyataan', n2);
+
+    let newPerihal = 'Permohonan Pembuatan Paspor';
+    if (newTemplate === 'pernyataan_jaminan') {
+      newPerihal = 'Surat Pernyataan dan Jaminan';
+    } else if (newTemplate === 'perpanjangan_paspor') {
+      newPerihal = 'Permohonan Perpanjangan Paspor';
+    } else if (newTemplate === 'penambahan_nama') {
+      newPerihal = 'Permohonan Penambahan Nama Paspor';
+    }
+
+    setData((prev) => ({
+      ...prev,
+      templateType: newTemplate,
+      tanggalSurat: todayStr,
+      nomorSurat: n1,
+      nomorSuratPernyataan: n2,
+      perihal: newPerihal,
+    }));
+  };
+
+  const handleGenerateNextSequentialNumber = () => {
+    const todayStr = getTodayIndonesianDate();
+    const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers();
+    setData((prev) => ({
+      ...prev,
+      nomorSurat: n1,
+      nomorSuratPernyataan: n2,
+      tanggalSurat: todayStr,
+    }));
   };
 
   return (
@@ -217,7 +290,7 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
       </div>
 
       {/* Validation Status Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         {/* NIK Card */}
         <div className={`p-4 rounded-xl border transition-colors ${nikValidation.isValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/80 border-amber-300 text-amber-900'}`}>
           <div className="flex items-center justify-between mb-1.5">
@@ -249,20 +322,6 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
           </div>
           <p className="text-[11px] mt-1 opacity-80">{kkValidation.message}</p>
         </div>
-
-        {/* Cross Check Match */}
-        <div className="p-4 rounded-xl border bg-slate-50 border-slate-200 text-slate-800">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-bold">Pemeriksaan Hubungan KK</span>
-            <FileCheck2 className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-xs font-semibold text-slate-700 truncate">
-            Kepala Keluarga: <span className="font-bold text-slate-900">{data.namaKepalaKeluarga || '-'}</span>
-          </div>
-          <p className="text-[11px] mt-1 text-slate-500">
-            Terverifikasi dalam database berkas keluarga pemohon.
-          </p>
-        </div>
       </div>
 
       {/* Main Split Layout: Left Form Fields, Right Original Document Inspector */}
@@ -290,33 +349,64 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
           </div>
 
           <div className="space-y-4">
-            {/* Nama Lengkap */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Nama Lengkap (Sesuai Ejaan KTP) *
-              </label>
-              <div className="relative flex items-center">
-                <input
-                  type="text"
-                  value={data.namaLengkap ?? ''}
-                  onChange={(e) => handleFieldChange('namaLengkap', e.target.value)}
-                  onBlur={(e) => handleFieldChange('namaLengkap', toTitleCase(e.target.value))}
-                  autoCapitalize="words"
-                  autoCorrect="off"
-                  spellCheck="false"
-                  className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-semibold tracking-wide min-h-[48px] bg-white text-slate-900"
-                  placeholder="Contoh: Euis Cholishoh"
-                />
-                {Boolean(data.namaLengkap) && (
-                  <button
-                    type="button"
-                    onClick={() => handleFieldChange('namaLengkap', '')}
-                    className="absolute right-2.5 p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-100 transition-colors"
-                    title="Hapus nama"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
+            {/* Nama Lengkap & Nama Ayah Lengkap in 2 columns */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Nama Lengkap (Sesuai Ejaan KTP) *
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    value={data.namaLengkap ?? ''}
+                    onChange={(e) => handleFieldChange('namaLengkap', e.target.value)}
+                    onBlur={(e) => handleFieldChange('namaLengkap', toTitleCase(e.target.value))}
+                    autoCapitalize="words"
+                    autoCorrect="off"
+                    spellCheck="false"
+                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-semibold tracking-wide min-h-[48px] bg-white text-slate-900"
+                    placeholder="Contoh: Euis Cholishoh"
+                  />
+                  {Boolean(data.namaLengkap) && (
+                    <button
+                      type="button"
+                      onClick={() => handleFieldChange('namaLengkap', '')}
+                      className="absolute right-2.5 p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-100 transition-colors"
+                      title="Hapus nama"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-emerald-800 mb-1">
+                  Nama Ayah Lengkap * (Persyaratan Paspor 3 Suku Kata)
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    value={data.namaAyah ?? ''}
+                    onChange={(e) => handleFieldChange('namaAyah', e.target.value)}
+                    onBlur={(e) => handleFieldChange('namaAyah', toTitleCase(e.target.value))}
+                    autoCapitalize="words"
+                    autoCorrect="off"
+                    spellCheck="false"
+                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-emerald-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-bold min-h-[48px] bg-emerald-50/30 text-slate-900"
+                    placeholder="Contoh: H. Ahmad Subandi"
+                  />
+                  {Boolean(data.namaAyah) && (
+                    <button
+                      type="button"
+                      onClick={() => handleFieldChange('namaAyah', '')}
+                      className="absolute right-2.5 p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-100 transition-colors"
+                      title="Hapus nama ayah"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -466,87 +556,29 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
               />
             </div>
 
-            {/* Nama Kepala Keluarga */}
+            {/* No WhatsApp Jamaah */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Nama Kepala Keluarga (Sesuai Kartu Keluarga)
+                No WhatsApp yang Bisa Dihubungi (Ketika Surat Jadi)
               </label>
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  value={data.namaKepalaKeluarga ?? ''}
-                  onChange={(e) => handleFieldChange('namaKepalaKeluarga', e.target.value)}
-                  onBlur={(e) => handleFieldChange('namaKepalaKeluarga', toTitleCase(e.target.value))}
-                  autoCapitalize="words"
-                  autoCorrect="off"
-                  spellCheck="false"
-                  className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-medium min-h-[48px] bg-white text-slate-900"
-                  placeholder="Contoh: Euis Cholishoh"
+                  value={data.nomorWhatsapp ?? ''}
+                  onChange={(e) => handleFieldChange('nomorWhatsapp', e.target.value)}
+                  className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono font-bold min-h-[48px] bg-white text-slate-900"
+                  placeholder="Contoh: 081234567890"
                 />
-                {Boolean(data.namaKepalaKeluarga) && (
+                {Boolean(data.nomorWhatsapp) && (
                   <button
                     type="button"
-                    onClick={() => handleFieldChange('namaKepalaKeluarga', '')}
+                    onClick={() => handleFieldChange('nomorWhatsapp', '')}
                     className="absolute right-2.5 p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-100 transition-colors"
-                    title="Hapus nama kepala keluarga"
+                    title="Hapus no WhatsApp"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 )}
-              </div>
-            </div>
-
-            {/* Nama Ayah Lengkap & No WhatsApp Jamaah */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Nama Ayah Lengkap * (Untuk Persyaratan Paspor Umrah 3 Suku Kata)
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type="text"
-                    value={data.namaAyah ?? ''}
-                    onChange={(e) => handleFieldChange('namaAyah', e.target.value)}
-                    onBlur={(e) => handleFieldChange('namaAyah', toTitleCase(e.target.value))}
-                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-medium min-h-[48px] bg-white text-slate-900"
-                    placeholder="Contoh: H. Ahmad Subandi"
-                  />
-                  {Boolean(data.namaAyah) && (
-                    <button
-                      type="button"
-                      onClick={() => handleFieldChange('namaAyah', '')}
-                      className="absolute right-2.5 p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-100 transition-colors"
-                      title="Hapus nama ayah"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  No WhatsApp yang Bisa Dihubungi (Ketika Surat Jadi)
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type="text"
-                    value={data.nomorWhatsapp ?? ''}
-                    onChange={(e) => handleFieldChange('nomorWhatsapp', e.target.value)}
-                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 pr-10 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono font-bold min-h-[48px] bg-white text-slate-900"
-                    placeholder="Contoh: 081234567890"
-                  />
-                  {Boolean(data.nomorWhatsapp) && (
-                    <button
-                      type="button"
-                      onClick={() => handleFieldChange('nomorWhatsapp', '')}
-                      className="absolute right-2.5 p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-slate-100 transition-colors"
-                      title="Hapus no WhatsApp"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
 
@@ -702,37 +734,68 @@ export const VerificationForm: React.FC<VerificationFormProps> = ({
             </div>
 
             {/* Letter Number and Date */}
-            <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>Nomor Surat Permohonan (Bisa Diedit Manual)</span>
-                  <button
-                    type="button"
-                    onClick={handleGenerateNextSequentialNumber}
-                    className="text-[10px] text-emerald-700 hover:text-emerald-800 flex items-center gap-1 font-bold cursor-pointer py-0.5 bg-emerald-50 px-2 rounded-md border border-emerald-200"
-                    title="Buat nomor urut selanjutnya secara berurutan"
-                  >
-                    <RefreshCw className="w-3 h-3" /> Nomor Urut Selanjutnya
-                  </button>
-                </label>
-                <input
-                  type="text"
-                  value={data.nomorSurat ?? ''}
-                  onChange={(e) => handleFieldChange('nomorSurat', e.target.value)}
-                  className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono min-h-[48px] bg-white text-slate-900"
-                />
+            <div className="pt-3 border-t border-slate-100 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-emerald-50/70 p-3 rounded-xl border border-emerald-200">
+                <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  Pembaruan Otomatis Nomor &amp; Tanggal Surat Resmi
+                </span>
+                <button
+                  type="button"
+                  onClick={handleGenerateNextSequentialNumber}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Update Otomatis Nomor &amp; Tanggal Hari Ini</span>
+                </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Tanggal Surat Diterbitkan
-                </label>
-                <input
-                  type="text"
-                  value={data.tanggalSurat ?? ''}
-                  onChange={(e) => handleFieldChange('tanggalSurat', e.target.value)}
-                  className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden min-h-[48px] bg-white text-slate-900"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Nomor Surat Permohonan
+                  </label>
+                  <input
+                    type="text"
+                    value={data.nomorSurat ?? ''}
+                    onChange={(e) => handleFieldChange('nomorSurat', e.target.value)}
+                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono font-bold min-h-[48px] bg-white text-slate-900"
+                    placeholder="Contoh: 7431/SR/AMW/X/2026"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Nomor Surat Pernyataan &amp; Jaminan (Alzam)
+                  </label>
+                  <input
+                    type="text"
+                    value={data.nomorSuratPernyataan ?? ''}
+                    onChange={(e) => handleFieldChange('nomorSuratPernyataan', e.target.value)}
+                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono font-bold min-h-[48px] bg-white text-slate-900"
+                    placeholder="Contoh: 7432/SR/AMW/X/2026"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                    <span>Tanggal Surat Diterbitkan</span>
+                    <button
+                      type="button"
+                      onClick={() => handleFieldChange('tanggalSurat', getTodayIndonesianDate())}
+                      className="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer"
+                    >
+                      Set Tanggal Hari Ini ({getTodayIndonesianDate()})
+                    </button>
+                  </label>
+                  <input
+                    type="text"
+                    value={data.tanggalSurat ?? ''}
+                    onChange={(e) => handleFieldChange('tanggalSurat', e.target.value)}
+                    className="w-full text-base sm:text-sm px-3.5 py-3 sm:py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-semibold min-h-[48px] bg-white text-slate-900"
+                    placeholder="Contoh: 8 Oktober 2026"
+                  />
+                </div>
               </div>
             </div>
 

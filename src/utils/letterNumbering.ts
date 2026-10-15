@@ -1,7 +1,7 @@
 import { LetterRecord } from '../types';
 
-const SEQUENCE_STORAGE_KEY = 'alzam_last_sequence_number_v2';
-const INITIAL_DEFAULT_SEQUENCE = 7380;
+const SEQUENCE_STORAGE_KEY = 'alzam_last_sequence_number_v7';
+const INITIAL_DEFAULT_SEQUENCE = 7430;
 
 /**
  * Extracts numeric prefix from a letter number like "7379/SR/AMW/X/2026" or "7379"

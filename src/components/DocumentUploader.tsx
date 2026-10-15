@@ -21,12 +21,18 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { UploadedFiles, ApplicantData, LetterTemplateType } from '../types';
-import { DEMO_PROFILES, generateKtpImage, generateKkImage } from '../utils/sampleDocuments';
+import { DEMO_PROFILES, generateKtpImage, generateKkImage, DemoProfile } from '../utils/sampleDocuments';
 import {
   parseSpreadsheetTextToApplicant,
   USER_SAMPLE_SPREADSHEET_ROW
 } from '../utils/spreadsheetParser';
-import { toTitleCase } from '../utils/letterFormatter';
+import {
+  toTitleCase,
+  formatApplicantData,
+  parsePlaceAndBirthDate,
+  cleanApplicantName,
+  formatIndonesianBirthDate,
+} from '../utils/letterFormatter';
 import { ImmigrationOfficePicker } from './ImmigrationOfficePicker';
 import { generateNextSequentialNumbers } from '../utils/letterNumbering';
 
@@ -68,15 +74,19 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     'Jl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434'
   );
   const [zoomImage, setZoomImage] = useState<{ title: string; src: string } | null>(null);
+  const [loadedDemoProfile, setLoadedDemoProfile] = useState<DemoProfile | null>(null);
 
   // Drag and drop state for photos with enter counters to prevent flickering
   const [isDraggingKtp, setIsDraggingKtp] = useState<boolean>(false);
   const [isDraggingKk, setIsDraggingKk] = useState<boolean>(false);
+  const [isDraggingPassport, setIsDraggingPassport] = useState<boolean>(false);
   const ktpDragCounter = useRef<number>(0);
   const kkDragCounter = useRef<number>(0);
+  const passportDragCounter = useRef<number>(0);
 
   const ktpInputRef = useRef<HTMLInputElement>(null);
   const kkInputRef = useRef<HTMLInputElement>(null);
+  const passportInputRef = useRef<HTMLInputElement>(null);
 
   // Prevent browser from opening dropped files in new tab when dropped outside zone
   React.useEffect(() => {
@@ -111,11 +121,62 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'jfif', 'heic', 'tif', 'tiff', 'svg'].includes(ext);
   };
 
-  // Helper to read file to Base64
+  // Helper to read file and compress oversized photos to crisp, lightweight Base64 (max 1920px)
   const readFileAsBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        if (!result) {
+          reject(new Error('Gagal membaca berkas gambar.'));
+          return;
+        }
+
+        // If file is already small (< 600KB), return directly
+        if (file.size < 600 * 1024) {
+          resolve(result);
+          return;
+        }
+
+        // Resize oversized photo via Canvas to optimize upload speed and prevent network payload timeout
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const maxDim = 1920;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+
+            if (ctx) {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(img, 0, 0, width, height);
+              const compressedBase64 = canvas.toDataURL('image/jpeg', 0.88);
+              resolve(compressedBase64);
+            } else {
+              resolve(result);
+            }
+          } catch {
+            resolve(result);
+          }
+        };
+        img.onerror = () => resolve(result);
+        img.src = result;
+      };
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
@@ -134,6 +195,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         ktpBase64: base64,
         ktpName: file.name,
       }));
+      setLoadedDemoProfile(null);
       setErrorMsg(null);
     } catch {
       setErrorMsg('Gagal membaca berkas KTP.');
@@ -153,6 +215,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         kkBase64: base64,
         kkName: file.name,
       }));
+      setLoadedDemoProfile(null);
       setErrorMsg(null);
     } catch {
       setErrorMsg('Gagal membaca berkas KK.');
@@ -249,6 +312,70 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
     }
   };
 
+  const processPassportFile = async (file: File) => {
+    if (!isImageFile(file)) {
+      setErrorMsg('Mohon unggah berkas berupa foto/scan gambar Paspor (JPG, PNG, WEBP).');
+      return;
+    }
+    try {
+      const base64 = await readFileAsBase64(file);
+      setFiles((prev) => ({
+        ...prev,
+        passportBase64: base64,
+        passportName: file.name,
+      }));
+      setLoadedDemoProfile(null);
+      setErrorMsg(null);
+    } catch {
+      setErrorMsg('Gagal membaca berkas Paspor.');
+    }
+  };
+
+  const handlePassportUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await processPassportFile(file);
+    }
+  };
+
+  const handlePassportDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    passportDragCounter.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingPassport(true);
+    }
+  };
+
+  const handlePassportDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDraggingPassport) {
+      setIsDraggingPassport(true);
+    }
+  };
+
+  const handlePassportDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    passportDragCounter.current -= 1;
+    if (passportDragCounter.current <= 0) {
+      passportDragCounter.current = 0;
+      setIsDraggingPassport(false);
+    }
+  };
+
+  const handlePassportDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    passportDragCounter.current = 0;
+    setIsDraggingPassport(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await processPassportFile(file);
+    }
+  };
+
   // 1-Click Load Demo Profile
   const handleLoadDemo = (profileIndex = 0) => {
     const profile = DEMO_PROFILES[profileIndex] || DEMO_PROFILES[0];
@@ -261,6 +388,8 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       kkBase64: kkDataUrl,
       kkName: `KK_No_${profile.kkData.noKk}.png`,
     });
+
+    setLoadedDemoProfile(profile);
 
     if (profile.id === 'shofiyullah-alzam') {
       setTemplateType('pernyataan_jaminan');
@@ -313,6 +442,14 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
   // Clean up error message into user-friendly Indonesian
   const formatErrorMessage = (raw: string): string => {
     if (!raw) return 'Terjadi kesalahan saat memproses dokumen.';
+    if (
+      raw.includes('Failed to fetch') ||
+      raw.includes('NetworkError') ||
+      raw.includes('TypeError') ||
+      raw.includes('fetch')
+    ) {
+      return 'Koneksi ke server AI terputus atau server sedang merespons ulang. Silakan klik "Coba Lagi" atau klik "Lanjut dengan Draf Cerdas" di samping.';
+    }
     if (raw.includes('503') || raw.includes('high demand') || raw.includes('UNAVAILABLE')) {
       return 'Server AI Google Gemini sedang mengalami lonjakan antrean sementara (503 High Demand). Silakan klik "Coba Lagi" atau gunakan opsi "Lanjut dengan Draf Cerdas".';
     }
@@ -332,26 +469,47 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
 
   // Submit documents to analysis endpoint
   const handleStartAnalysis = async () => {
-    if (!files.ktpBase64 && !files.kkBase64) {
-      setErrorMsg('Mohon unggah dokumen scan/foto KTP dan Kartu Keluarga (KK) terlebih dahulu.');
+    if (!files.ktpBase64 && !files.kkBase64 && !files.passportBase64) {
+      setErrorMsg('Mohon unggah dokumen scan/foto KTP, Kartu Keluarga (KK), atau Paspor terlebih dahulu.');
       return;
     }
 
     setIsAnalyzing(true);
     setErrorMsg(null);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
     try {
       const res = await fetch('/api/analyze-documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           ktpImage: files.ktpBase64,
           kkImage: files.kkBase64,
+          passportImage: files.passportBase64,
           departureMonth: departureDate,
           tujuanKantorImigrasi: tujuanImigrasi,
           alamatKantorImigrasi: alamatImigrasi,
           kantorImigrasiDanAlamat: `${tujuanImigrasi}, ${alamatImigrasi}`,
           templateType,
+          clientOcrData: loadedDemoProfile
+            ? {
+                nik: loadedDemoProfile.ktpData.nik,
+                namaLengkap: loadedDemoProfile.ktpData.nama,
+                tempatLahir: loadedDemoProfile.ktpData.tempatLahir,
+                tanggalLahir: loadedDemoProfile.ktpData.tanggalLahir,
+                tempatTanggalLahir: `${loadedDemoProfile.ktpData.tempatLahir}, ${loadedDemoProfile.ktpData.tanggalLahir}`,
+                jenisKelamin: loadedDemoProfile.ktpData.jenisKelamin,
+                alamatKtp: `${loadedDemoProfile.ktpData.alamat}, RT/RW: ${loadedDemoProfile.ktpData.rtRw}, Kel/Desa: ${loadedDemoProfile.ktpData.kelDesa}, Kec. ${loadedDemoProfile.ktpData.kecamatan}, ${loadedDemoProfile.ktpData.kota}, ${loadedDemoProfile.ktpData.provinsi}`,
+                nomorKk: loadedDemoProfile.kkData.noKk,
+                namaKepalaKeluarga: loadedDemoProfile.kkData.kepalaKeluarga,
+                namaAyah: loadedDemoProfile.kkData.kepalaKeluarga,
+                nomorPasporLama: (loadedDemoProfile as any).passportData?.passportNo || '',
+                dateOfExpiry: (loadedDemoProfile as any).passportData?.dateOfExpiry || '',
+              }
+            : undefined,
         }),
       });
 
@@ -362,26 +520,41 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
 
       const data = json.data;
       const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers();
-      onExtractionSuccess({
-        ...data,
-        nomorSurat: data.nomorSurat || n1,
-        nomorSuratPernyataan: data.nomorSuratPernyataan || n2,
-        namaLengkap: toTitleCase(data.namaLengkap),
-        tempatLahir: toTitleCase(data.tempatLahir),
-        tempatTanggalLahir: toTitleCase(data.tempatTanggalLahir),
-        alamatKtp: toTitleCase(data.alamatKtp),
-        namaKepalaKeluarga: toTitleCase(data.namaKepalaKeluarga),
-        estimasiKeberangkatan: departureDate || data.estimasiKeberangkatan,
-        jadwalKeberangkatanDanKepulangan: departureDate || data.jadwalKeberangkatanDanKepulangan,
-        tujuanKantorImigrasi: toTitleCase(tujuanImigrasi),
-        alamatKantorImigrasi: toTitleCase(alamatImigrasi),
-        templateType,
-      });
+      const ttlParsed = parsePlaceAndBirthDate(data.tempatLahir, data.tanggalLahir, data.tempatTanggalLahir, data.nik);
+      const cleanNama = cleanApplicantName(data.namaLengkap);
+
+      onExtractionSuccess(
+        formatApplicantData({
+          ...data,
+          nomorSurat: n1,
+          nomorSuratPernyataan: n2,
+          namaLengkap: toTitleCase(cleanNama || data.namaLengkap),
+          tempatLahir: ttlParsed.tempatLahir,
+          tanggalLahir: ttlParsed.tanggalLahir,
+          tempatTanggalLahir: ttlParsed.tempatTanggalLahir,
+          jenisKelamin: (data.jenisKelamin || ttlParsed.jenisKelamin || 'PEREMPUAN').toUpperCase(),
+          alamatKtp: toTitleCase(data.alamatKtp),
+          namaKepalaKeluarga: toTitleCase(data.namaKepalaKeluarga),
+          nomorPasporLama: data.nomorPasporLama || '',
+          dateOfExpiry: data.dateOfExpiry || data.expiredDatePaspor || '',
+          expiredDatePaspor: data.dateOfExpiry || data.expiredDatePaspor || '',
+          estimasiKeberangkatan: departureDate || data.estimasiKeberangkatan,
+          jadwalKeberangkatanDanKepulangan: departureDate || data.jadwalKeberangkatanDanKepulangan,
+          tujuanKantorImigrasi: toTitleCase(tujuanImigrasi),
+          alamatKantorImigrasi: toTitleCase(alamatImigrasi),
+          templateType,
+        })
+      );
     } catch (err: any) {
       console.error('Extraction error:', err);
-      const friendly = formatErrorMessage(err.message || String(err));
-      setErrorMsg(friendly);
+      if (err.name === 'AbortError') {
+        setErrorMsg('Waktu pemrosesan melebihi batas. Silakan klik tombol "Lanjut dengan Draf Cerdas" di bawah untuk langsung memverifikasi data.');
+      } else {
+        const friendly = formatErrorMessage(err.message || String(err));
+        setErrorMsg(friendly);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setIsAnalyzing(false);
     }
   };
@@ -389,40 +562,131 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
   // Fallback to manual verification draft with clean Title Case
   const handleProceedWithDraft = () => {
     const { nomorSurat: n1, nomorSuratPernyataan: n2 } = generateNextSequentialNumbers();
-    onExtractionSuccess({
-      templateType,
-      nik: '3604075304950002',
-      namaLengkap: 'Euis Cholishoh',
-      tempatLahir: 'Serang',
-      tanggalLahir: '13 April 1995',
-      tempatTanggalLahir: 'Serang, 13 April 1995',
-      jenisKelamin: 'PEREMPUAN',
-      alamatKtp: 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten',
-      nomorKk: '3604070000000000',
-      namaKepalaKeluarga: 'Euis Cholishoh',
-      namaAyah: 'H. Ahmad Subandi',
-      negaraTujuan: 'Arab Saudi',
-      estimasiKeberangkatan: departureDate || '16 - 24 November 2026',
-      jadwalKeberangkatanDanKepulangan: departureDate || '16 - 24 November 2026',
-      keperluan: 'Permohonan Pembuatan Paspor Umrah',
-      nomorSurat: n1,
-      nomorSuratPernyataan: n2,
-      perihal: templateType === 'pernyataan_jaminan' ? 'Surat Pernyataan dan Jaminan' : templateType === 'penambahan_nama' ? 'Permohonan Penambahan Nama Paspor' : templateType === 'perpanjangan_paspor' ? 'Permohonan Perpanjangan Paspor' : 'Permohonan Pembuatan Paspor',
-      tanggalSurat: '5 Oktober 2026',
-      kotaPenerbitan: 'Jakarta',
-      pejabatNama: 'Khairul Umam, ST, BA, MBA',
-      pejabatJabatan: 'Direktur Utama',
-      namaPerusahaan: 'PT. Alzam Mandiri Wisata',
-      taglinePerusahaan: 'Tour & Travel',
-      izinPpiu: '29042200007580004',
-      alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
-      tujuanKantorImigrasi: tujuanImigrasi,
-      alamatKantorImigrasi: alamatImigrasi,
-      tanggalIzinPpiu: '02 Agustus 2022',
-      teleponPerusahaan: '0815-9888-154',
-      emailPerusahaan: 'alzam@bisa.id',
-      websitePerusahaan: 'www.umrahbisa.com',
-    });
+
+    if (loadedDemoProfile) {
+      const p = loadedDemoProfile;
+      const ttlP = parsePlaceAndBirthDate(p.ktpData.tempatLahir, p.ktpData.tanggalLahir, undefined, p.ktpData.nik);
+      onExtractionSuccess(
+        formatApplicantData({
+          templateType,
+          nik: p.ktpData.nik,
+          namaLengkap: toTitleCase(p.ktpData.nama),
+          tempatLahir: ttlP.tempatLahir,
+          tanggalLahir: ttlP.tanggalLahir,
+          tempatTanggalLahir: ttlP.tempatTanggalLahir,
+          jenisKelamin: p.ktpData.jenisKelamin.toUpperCase(),
+          alamatKtp: toTitleCase(`${p.ktpData.alamat}, RT/RW: ${p.ktpData.rtRw}, Kel/Desa: ${p.ktpData.kelDesa}, Kec. ${p.ktpData.kecamatan}, ${p.ktpData.kota}, ${p.ktpData.provinsi}`),
+          nomorKk: p.kkData.noKk,
+          namaKepalaKeluarga: toTitleCase(p.kkData.kepalaKeluarga),
+          namaAyah: toTitleCase(p.kkData.kepalaKeluarga),
+          nomorPasporLama: (p as any).passportData?.passportNo || '',
+          dateOfExpiry: (p as any).passportData?.dateOfExpiry || '',
+          expiredDatePaspor: (p as any).passportData?.dateOfExpiry || '',
+          negaraTujuan: p.country || 'Arab Saudi',
+          estimasiKeberangkatan: departureDate || p.departure || '16 - 24 November 2026',
+          jadwalKeberangkatanDanKepulangan: departureDate || p.departure || '16 - 24 November 2026',
+          keperluan: p.purpose || 'Surat Pernyataan dan Jaminan Paspor Umrah',
+          nomorSurat: n1,
+          nomorSuratPernyataan: n2,
+          perihal: templateType === 'pernyataan_jaminan' ? 'Surat Pernyataan dan Jaminan' : templateType === 'penambahan_nama' ? 'Permohonan Penambahan Nama Paspor' : templateType === 'perpanjangan_paspor' ? 'Permohonan Perpanjangan Paspor' : 'Permohonan Pembuatan Paspor',
+          tanggalSurat: '',
+          kotaPenerbitan: 'Jakarta',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
+          pejabatJabatan: 'Direktur Utama',
+          namaPerusahaan: 'PT. Alzam Mandiri Wisata',
+          taglinePerusahaan: 'Tour & Travel',
+          izinPpiu: '29042200007580004',
+          alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
+          tujuanKantorImigrasi: tujuanImigrasi,
+          alamatKantorImigrasi: alamatImigrasi,
+          tanggalIzinPpiu: '02 Agustus 2022',
+          teleponPerusahaan: '0815-9888-154',
+          emailPerusahaan: 'alzam@bisa.id',
+          websitePerusahaan: 'www.umrahbisa.com',
+        })
+      );
+      setErrorMsg(null);
+      return;
+    }
+
+    const hasFiles = Boolean(files.ktpBase64 || files.kkBase64 || files.passportBase64);
+    if (hasFiles) {
+      onExtractionSuccess(
+        formatApplicantData({
+          templateType,
+          nik: '',
+          namaLengkap: '',
+          tempatLahir: '',
+          tanggalLahir: '',
+          tempatTanggalLahir: '',
+          jenisKelamin: 'LAKI-LAKI',
+          alamatKtp: '',
+          nomorKk: '',
+          namaKepalaKeluarga: '',
+          namaAyah: '',
+          negaraTujuan: 'Arab Saudi',
+          estimasiKeberangkatan: departureDate || '16 - 24 November 2026',
+          jadwalKeberangkatanDanKepulangan: departureDate || '16 - 24 November 2026',
+          keperluan: 'Permohonan Pembuatan Paspor Umrah',
+          nomorSurat: n1,
+          nomorSuratPernyataan: n2,
+          perihal: templateType === 'pernyataan_jaminan' ? 'Surat Pernyataan dan Jaminan' : templateType === 'penambahan_nama' ? 'Permohonan Penambahan Nama Paspor' : templateType === 'perpanjangan_paspor' ? 'Permohonan Perpanjangan Paspor' : 'Permohonan Pembuatan Paspor',
+          tanggalSurat: '',
+          kotaPenerbitan: 'Jakarta',
+          pejabatNama: 'Khairul Umam, ST, BA, MBA',
+          pejabatJabatan: 'Direktur Utama',
+          namaPerusahaan: 'PT. Alzam Mandiri Wisata',
+          taglinePerusahaan: 'Tour & Travel',
+          izinPpiu: '29042200007580004',
+          alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
+          tujuanKantorImigrasi: tujuanImigrasi,
+          alamatKantorImigrasi: alamatImigrasi,
+          tanggalIzinPpiu: '02 Agustus 2022',
+          teleponPerusahaan: '0815-9888-154',
+          emailPerusahaan: 'alzam@bisa.id',
+          websitePerusahaan: 'www.umrahbisa.com',
+        })
+      );
+      setErrorMsg(null);
+      return;
+    }
+
+    onExtractionSuccess(
+      formatApplicantData({
+        templateType,
+        nik: '3604075304950002',
+        namaLengkap: 'Euis Cholishoh',
+        tempatLahir: 'Serang',
+        tanggalLahir: '13 April 1995',
+        tempatTanggalLahir: 'Serang, 13 April 1995',
+        jenisKelamin: 'PEREMPUAN',
+        alamatKtp: 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten',
+        nomorKk: '3604070000000000',
+        namaKepalaKeluarga: 'Euis Cholishoh',
+        namaAyah: 'H. Ahmad Subandi',
+        negaraTujuan: 'Arab Saudi',
+        estimasiKeberangkatan: departureDate || '16 - 24 November 2026',
+        jadwalKeberangkatanDanKepulangan: departureDate || '16 - 24 November 2026',
+        keperluan: 'Permohonan Pembuatan Paspor Umrah',
+        nomorSurat: n1,
+        nomorSuratPernyataan: n2,
+        perihal: templateType === 'pernyataan_jaminan' ? 'Surat Pernyataan dan Jaminan' : templateType === 'penambahan_nama' ? 'Permohonan Penambahan Nama Paspor' : templateType === 'perpanjangan_paspor' ? 'Permohonan Perpanjangan Paspor' : 'Permohonan Pembuatan Paspor',
+        tanggalSurat: '',
+        kotaPenerbitan: 'Jakarta',
+        pejabatNama: 'Khairul Umam, ST, BA, MBA',
+        pejabatJabatan: 'Direktur Utama',
+        namaPerusahaan: 'PT. Alzam Mandiri Wisata',
+        taglinePerusahaan: 'Tour & Travel',
+        izinPpiu: '29042200007580004',
+        alamatPerusahaan: 'Ciledug Mas, Jl. HOS Cokroaminoto Blok C9 dan C10, RT.003/RW.004, Sudimara Timur, Kecamatan Karang Tengah, Kota Tangerang, Banten 15151',
+        tujuanKantorImigrasi: tujuanImigrasi,
+        alamatKantorImigrasi: alamatImigrasi,
+        tanggalIzinPpiu: '02 Agustus 2022',
+        teleponPerusahaan: '0815-9888-154',
+        emailPerusahaan: 'alzam@bisa.id',
+        websitePerusahaan: 'www.umrahbisa.com',
+      })
+    );
     setErrorMsg(null);
   };
 
@@ -850,7 +1114,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
       {/* ========================================================================= */}
       {inputMode === 'files' && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Dropzone 1: KTP */}
         <div
           onDragEnter={handleKtpDragEnter}
@@ -969,7 +1233,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-800 text-base">Kartu Keluarga (KK)</h3>
-                  <p className="text-xs text-slate-500">Nomor KK 16 Digit &amp; Kepala Keluarga</p>
+                  <p className="text-xs text-slate-500">Nomor KK 16 Digit &amp; Nama Ayah</p>
                 </div>
               </div>
               {files.kkBase64 && (
@@ -1040,7 +1304,114 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
                 </p>
                 <p className="text-xs text-slate-400 mt-1 pointer-events-none">Format: JPG, PNG, WEBP (Maksimal 10 MB)</p>
                 <p className="text-[11px] text-emerald-700 font-medium mt-3 bg-emerald-50 px-2.5 py-1 rounded-md pointer-events-none">
-                  Nomor KK 16 digit tertera di bagian atas
+                  Nama Ayah Kandung diekstrak otomatis dari tabel KK
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Dropzone 3: Paspor Lama (Khusus Tambahan Nama & Perpanjangan) */}
+        <div
+          onDragEnter={handlePassportDragEnter}
+          onDragOver={handlePassportDragOver}
+          onDragLeave={handlePassportDragLeave}
+          onDrop={handlePassportDrop}
+          className={`bg-white rounded-2xl border shadow-sm p-6 flex flex-col justify-between transition-all relative ${
+            templateType === 'penambahan_nama' || templateType === 'perpanjangan_paspor'
+              ? 'border-amber-400 ring-2 ring-amber-300/50 bg-amber-50/20'
+              : 'border-slate-200 hover:border-amber-400'
+          } ${
+            isDraggingPassport
+              ? 'border-amber-500 ring-4 ring-amber-500/20 bg-amber-50/80'
+              : ''
+          }`}
+        >
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-sm">
+                  3
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base flex items-center gap-1.5">
+                    <span>Paspor Lama</span>
+                    <span className="text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.2 rounded-md">
+                      Pilihan
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500">Scan Biodata Paspor (Nomor Paspor &amp; Expiry)</p>
+                </div>
+              </div>
+              {files.passportBase64 && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
+                  Siap Pindai
+                </span>
+              )}
+            </div>
+
+            {/* Upload Area or Preview */}
+            {files.passportBase64 ? (
+              <div className="relative group rounded-xl overflow-hidden border border-amber-200 bg-amber-50/50 aspect-[16/10] flex items-center justify-center">
+                <img
+                  src={files.passportBase64}
+                  alt="Passport Preview"
+                  className="w-full h-full object-contain p-2 pointer-events-none"
+                />
+                {isDraggingPassport && (
+                  <div className="absolute inset-0 bg-amber-600/90 text-white flex flex-col items-center justify-center gap-2 z-30 pointer-events-none">
+                    <Upload className="w-8 h-8 animate-bounce" />
+                    <span className="text-sm font-bold">Lepaskan untuk mengganti foto Paspor</span>
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 backdrop-blur-xs">
+                  <button
+                    type="button"
+                    onClick={() => setZoomImage({ title: 'Dokumen Paspor Lama', src: files.passportBase64! })}
+                    className="p-2 bg-white/90 hover:bg-white text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1 shadow cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" /> Perbesar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiles((p) => ({ ...p, passportBase64: null, passportName: null }))}
+                    className="p-2 bg-red-600/90 hover:bg-red-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Ganti
+                  </button>
+                </div>
+                <div className="absolute bottom-2 left-2 bg-slate-900/80 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-xs truncate max-w-[80%] pointer-events-none">
+                  {files.passportName || 'Passport_Document.png'}
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => passportInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center aspect-[16/10] group ${
+                  isDraggingPassport
+                    ? 'border-amber-500 bg-amber-100/80 scale-[1.02] ring-4 ring-amber-500/20 shadow-md'
+                    : 'border-slate-300 hover:border-amber-500 bg-slate-50/50 hover:bg-amber-50/20'
+                }`}
+              >
+                <input
+                  type="file"
+                  ref={passportInputRef}
+                  onChange={handlePassportUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-transform pointer-events-none ${
+                  isDraggingPassport ? 'bg-amber-600 text-white scale-125' : 'bg-amber-100 text-amber-700 group-hover:scale-110'
+                }`}>
+                  <Upload className="w-6 h-6" />
+                </div>
+                <p className="text-sm font-semibold text-slate-700 pointer-events-none">
+                  {isDraggingPassport ? 'Lepaskan foto Paspor di sini!' : 'Klik atau seret foto Paspor Lama di sini'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 pointer-events-none">Format: JPG, PNG, WEBP (Maksimal 10 MB)</p>
+                <p className="text-[11px] text-amber-800 font-medium mt-3 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-md pointer-events-none">
+                  Masa berlaku &amp; No. Paspor diekstrak otomatis
                 </p>
               </div>
             )}
@@ -1134,11 +1505,11 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
         <button
           type="button"
           onClick={handleStartAnalysis}
-          disabled={isAnalyzing || (!files.ktpBase64 && !files.kkBase64)}
+          disabled={isAnalyzing || (!files.ktpBase64 && !files.kkBase64 && !files.passportBase64)}
           className={`w-full sm:w-auto px-7 py-3.5 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2 transition-all shadow-lg cursor-pointer ${
             isAnalyzing
               ? 'bg-slate-700 text-slate-300 cursor-not-allowed'
-              : !files.ktpBase64 && !files.kkBase64
+              : (!files.ktpBase64 && !files.kkBase64 && !files.passportBase64)
               ? 'bg-[#265A42] text-[#88A995] cursor-not-allowed border border-[#3E8060]'
               : 'bg-[#2C6B4F] hover:bg-[#235840] text-white shadow-[#2C6B4F]/30 hover:scale-[1.02] active:scale-98'
           }`}
@@ -1146,12 +1517,12 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({
           {isAnalyzing ? (
             <>
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              <span>Memproses KTP &amp; KK...</span>
+              <span>Memproses Dokumen (KTP, KK &amp; Paspor)...</span>
             </>
           ) : (
             <>
               <FileText className="w-4 h-4" />
-              <span>🚀 Proses Scan KTP &amp; KK Menjadi Surat Resmi</span>
+              <span>🚀 Proses Scan Dokumen (KTP, KK &amp; Paspor) Menjadi Surat Resmi</span>
             </>
           )}
         </button>

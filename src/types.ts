@@ -69,6 +69,8 @@ export interface UploadedFiles {
   ktpName: string | null;
   kkBase64: string | null;
   kkName: string | null;
+  passportBase64?: string | null;
+  passportName?: string | null;
 }
 
 export interface LetterRecord extends ApplicantData {

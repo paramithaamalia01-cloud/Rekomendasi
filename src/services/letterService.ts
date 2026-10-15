@@ -40,9 +40,29 @@ export function subscribeToUserLetters(
         console.warn('Firestore real-time sync is currently in offline-first mode.');
         return;
       }
-      handleFirestoreError(error, OperationType.GET, 'letters');
+      handleFirestoreError(error, OperationType.LIST, 'letters');
     }
   );
+}
+
+export function sanitizeForFirestore<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  if (typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore).filter((item) => item !== undefined) as any;
+  }
+  const cleaned: Record<string, any> = {};
+  for (const key of Object.keys(obj as any)) {
+    const val = (obj as any)[key];
+    if (val !== undefined) {
+      cleaned[key] = sanitizeForFirestore(val);
+    }
+  }
+  return cleaned as T;
 }
 
 export async function saveLetterToFirestore(
@@ -50,11 +70,11 @@ export async function saveLetterToFirestore(
   letter: LetterRecord
 ): Promise<void> {
   const letterDocRef = doc(db, 'letters', letter.id);
-  const dataToSave = {
+  const dataToSave = sanitizeForFirestore({
     ...letter,
     userId,
     updatedAt: new Date().toISOString(),
-  };
+  });
 
   try {
     await setDoc(letterDocRef, dataToSave, { merge: true });

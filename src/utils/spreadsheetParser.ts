@@ -1,5 +1,11 @@
 import { ApplicantData, LetterTemplateType } from '../types';
-import { toTitleCase } from './letterFormatter';
+import {
+  toTitleCase,
+  parsePlaceAndBirthDate,
+  cleanApplicantName,
+  extractBirthInfoFromNik,
+  formatIndonesianBirthDate,
+} from './letterFormatter';
 
 export interface ParsedSpreadsheetRow {
   isValid: boolean;
@@ -173,13 +179,17 @@ export function parseSpreadsheetTextToApplicant(
     });
   }
 
-  // Parse tempat & tanggal lahir if present (e.g. "Serang, 13 April 1995")
-  let tempatLahir = 'Serang';
-  let tanggalLahir = '13 April 1995';
-  if (tempatTanggalLahir.includes(',')) {
-    const parts = tempatTanggalLahir.split(',');
-    tempatLahir = parts[0].trim();
-    tanggalLahir = parts.slice(1).join(',').trim();
+  // Clean applicant name
+  const cleanNama = toTitleCase(cleanApplicantName(namaLengkap || ''));
+
+  // Parse tempat & tanggal lahir accurately
+  const ttlParsed = parsePlaceAndBirthDate(undefined, undefined, tempatTanggalLahir, nik);
+
+  // Derive gender from NIK if present
+  let gender: 'LAKI-LAKI' | 'PEREMPUAN' = ttlParsed.jenisKelamin || 'PEREMPUAN';
+  if (nik && nik.length === 16) {
+    const info = extractBirthInfoFromNik(nik);
+    if (info) gender = info.jenisKelamin;
   }
 
   // Clean trailing commas from address
@@ -192,14 +202,14 @@ export function parseSpreadsheetTextToApplicant(
     templateType: preferredTemplate,
     idJamaah: idJamaah || '3495',
     nik: nik || '3604075304950002',
-    namaLengkap: toTitleCase(namaLengkap || 'Euis Cholishoh'),
-    tempatLahir: toTitleCase(tempatLahir),
-    tanggalLahir: toTitleCase(tanggalLahir),
-    tempatTanggalLahir: toTitleCase(tempatTanggalLahir || `${tempatLahir}, ${tanggalLahir}`),
-    jenisKelamin: 'PEREMPUAN',
+    namaLengkap: cleanNama || 'Euis Cholishoh',
+    tempatLahir: ttlParsed.tempatLahir || 'Serang',
+    tanggalLahir: ttlParsed.tanggalLahir || '13 April 1995',
+    tempatTanggalLahir: ttlParsed.tempatTanggalLahir || 'Serang, 13 April 1995',
+    jenisKelamin: gender,
     alamatKtp: toTitleCase(alamatKtp || 'Kp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten'),
     nomorKk: '3604070000000000',
-    namaKepalaKeluarga: toTitleCase(namaLengkap || 'Euis Cholishoh'),
+    namaKepalaKeluarga: cleanNama || 'Euis Cholishoh',
     negaraTujuan: 'Arab Saudi',
     estimasiKeberangkatan: jadwalKeberangkatan || '16 - 24 November 2026',
     jadwalKeberangkatanDanKepulangan: jadwalKeberangkatan || '16 - 24 November 2026',
@@ -237,4 +247,4 @@ export function parseSpreadsheetTextToApplicant(
 }
 
 export const USER_SAMPLE_SPREADSHEET_ROW =
-  `3495\t5 Oktober 2026\t7379\t7380\t7379/SR/AMW/X/2026\t7380/SR/AMW/X/2026\tX\t10\tEuis Cholishoh\tEuis Cholishoh\tSerang, 13 April 1995\tSerang, 13 April 1995\t3604075304950002\tKp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten,  \tKp. Kubang Laban RT.005, RW.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten,  \t16 - 24 November 2026\t"Kepala Kantor Imigrasi Kelas II Cilegon \nJl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434"`;
+  `3495\t7 Oktober 2026\t7431\t7432\t7431/SR/AMW/X/2026\t7432/SR/AMW/X/2026\tX\t10\tEuis Cholishoh\tEuis Cholishoh\tSerang, 13 April 1995\tSerang, 13 April 1995\t3604075304950002\tKp. Kubang Laban Rt.005, Rw.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten,  \tKp. Kubang Laban RT.005, RW.003, Kelurahan Lambangsari, Kec. Bojonegara, Kabupaten Serang, Provinsi Banten,  \t16 - 24 November 2026\t"Kepala Kantor Imigrasi Kelas II Cilegon \nJl. KH. Yasin Beji No.8, Kotabumi, Kec. Purwakarta, Kota Cilegon, Banten 42434"`;

@@ -155,6 +155,19 @@ body {
   min-height: 297mm;
   padding: 2.0cm 2.5cm;
   background-color: #ffffff;
+  transition: max-width 0.2s ease, min-height 0.2s ease;
+}
+
+/* Precision A4 Standard Layout (210mm x 297mm) */
+.official-letter-page.page-a4 {
+  max-width: 210mm;
+  min-height: 297mm;
+}
+
+/* Precision F4 / Folio Indonesian Immigration Standard Layout (215mm x 330mm) */
+.official-letter-page.page-f4 {
+  max-width: 215mm;
+  min-height: 330mm;
 }
 
 @media screen and (max-width: 640px) {
@@ -166,11 +179,14 @@ body {
 
 /* Official Document Print Styles */
 @media print {
-  body {
+  html, body {
     background: #ffffff !important;
     color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
@@ -179,14 +195,40 @@ body {
   header,
   nav,
   button,
-  .print\:hidden {
+  .print\:hidden,
+  .print-hidden,
+  [data-print-hidden="true"],
+  .fixed {
     display: none !important;
+  }
+
+  /* Unset app wrappers so browser never clips or truncates page scrolls */
+  #root,
+  .min-h-screen,
+  main,
+  .max-w-7xl,
+  .max-w-5xl,
+  .overflow-x-auto {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
   }
 
   /* Standar Resmi: Margin Halaman Kiri 2.5cm & Kanan 2.5cm, Atas 2.0cm & Bawah 2.0cm */
   @page {
-    size: A4 portrait;
+    size: auto;
     margin: 2.0cm 2.5cm 2.0cm 2.5cm;
+  }
+
+  #official-letter-to-print {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    overflow: visible !important;
   }
 
   .official-letter-page {
@@ -198,7 +240,34 @@ body {
     max-width: 100% !important;
     width: 100% !important;
     min-height: auto !important;
+    background: #ffffff !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .official-letter-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .text-kop-tagline {
+    color: #0d5526 !important;
+  }
+
+  .text-kop-link {
+    color: #1d4ed8 !important;
+    text-decoration: underline !important;
+  }
+
+  /* Remove input outlines and background tints during printing */
+  .doc-inline-input,
+  input,
+  textarea {
+    border: none !important;
     background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    outline: none !important;
   }
 }
 
